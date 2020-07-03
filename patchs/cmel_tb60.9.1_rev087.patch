@@ -1,0 +1,366 @@
+# HG changeset patch
+# User pm
+# Date 1539353659 -7200
+#      Fri Oct 12 16:14:19 2018 +0200
+# Node ID ef226ec691b845195092f699522a35e085d7bf99
+# Parent  cfde8ec5c4afa84a416d36e6c2d0a6686b12b67b
+Ticket mantis 0004769: Simplification du menu contextuel associé aux messages
+
+diff --git a/comm-esr60/comm/mail/base/content/Enregistrer.png b/comm-esr60/comm/mail/base/content/Enregistrer.png
+new file mode 100644
+index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..072f2c7a6eb29b346c825f766413f2d47e2a9ca2
+GIT binary patch
+literal 441
+zc$@*b0Y?6bP)<h;3K|Lk000e1NJLTq000mG000mO1^@s6AM^iV00006VoOIv0RI60
+z0RN!9r;`8x010qNS#tmY4c7nw4c7reD4Tcy000McNliru;S3KCEfl@;R(}8h0Y*tg
+zK~y+T&62%J!%!H8-#6z#3W4J6R0oL#m!tvdMYsrOv)+K+I||);0gj>t_X^%XZXoI4
+z;M5;b?B2<q+I%jx_BVC(8Bd<~AtVR**BE1zF-GM%-1Wd1qx${+ort)_VzCy-@z*wQ
+zYuy;5dcEE~$t#kl*4h)__n(HtVYWA5j8TKZ-~m7lz#D*10B6?PvhVwy^~gq`P$;zL
+z;~Nn<ASnQD0bEZelcUjS)LHhO^?-=9Nj8!sY5trgNzx?Q5Rvw}pGz2qaivmu$#XOS
+z1VM19l)B8a>^V)-*StX(hGoZb&S$gPW4GJ=Z~#DST@sNN$slhG03-tuX=$xX!2At%
+z;kxdHwRYn>Ewd63k!lo0i{CVzPC*h;6fK-A%c|t>{aXo;tcyq;IV_KXdBF3$bUYp(
+jZ(Z!b^St+c&Y$=O&eC<N9~wcy00000NkvXXu0mjf+sDAS
+
+diff --git a/comm-esr60/comm/mail/base/content/Imprimer.png b/comm-esr60/comm/mail/base/content/Imprimer.png
+new file mode 100644
+index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..f69ce0298191a8f769dfebbf211c50411fe6f239
+GIT binary patch
+literal 387
+zc%17D@N?(olHy`uVBq!ia0vp^0wB!61|;P_|4#%`Y)RhkE)4%caKYZ?lYt_f1s;*b
+zKpodXn9)gNb_Gz7y~NYkmHi<PKfk*Cg>&h(3=E6{o-U3d7XC*k8G0RY5NX?Q9yv)v
+z`&dxF;pLl^Z2XB!r`|Ya*0jO>15Z;0<7w9u6An2Q98}hDG)PfAf9R}G+VP~o5ABT)
+ztL6L6`y1okoF2@%oqPM*ktZsiTUM?5t|;xg=eW-4c}g;&wk+S0w}!6S%0K(cqQ!Ya
+zj0NZBGKG6@W3Bo3V13pqtFQO`f5|R6P@%y0KJgfX(xij(Hj39Cw7&05N*6nIk@J$t
+zUB-9p&zI?(Ztci;(Z>+-m9K(TU}E>Kb@rcZ_P<jNeLH<uz}3g9)p4dD?wxP6Y}op3
+zjYij+%vp=~H5xwSolzRQ{NC?qw#eU|N}H~moaGGo?h`8f{ElUTz^`oHkW!|cc9{bb
+f#gdQz&(?qVF)Tgs*H#B$a4~qg`njxgN@xNAe_Nu~
+
+diff --git a/comm-esr60/comm/mail/base/content/Nouveaumessage.png b/comm-esr60/comm/mail/base/content/Nouveaumessage.png
+new file mode 100644
+index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..73216e4cd0e21d337daf6a09049d7e0e4f9d3789
+GIT binary patch
+literal 335
+zc%17D@N?(olHy`uVBq!ia0vp^0wB!61|;P_|4#%`Y)RhkE)4%caKYZ?lYt_f1s;*b
+zKpodXn9)gNb_Gz7y~NYkmHi<PKfj7pcjo~^pwJyp7sn6_|D%^|y_g+E4t$(1EggMX
+zL&%;Z&gFxE+@Vu$Z*p9wgjhDrtzhF8%vqxw8uXNn(RH@3;btR0wcV|)^%65G-~WHM
+z_wR%GD`xrXbAH>{`t{JN4}yCc=Y8n&49ah*Iw|Fzt}b?UM?>iTpNBeK<60iEzu`Q4
+zt|+r5Qm$vo-1V1Tmd=i~;hMYtL(k($5wjBHgBN~I?YaACtKcrR9fJGLSo(Q8{Syjq
+z`*BS0-89c!ai4+<liYtRU(wwu|B188LZ_2c`laIj1m5qvDznYBJqx5~cjry?fB627
+ab+N0wM!fm^jA=lBGI+ZBxvX<aXaWGnHiVA=
+
+diff --git a/comm-esr60/comm/mail/base/content/Repondre.png b/comm-esr60/comm/mail/base/content/Repondre.png
+new file mode 100644
+index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..76109d6966ed5338754127fea9989a312ff577f4
+GIT binary patch
+literal 418
+zc$@*E0bTxyP)<h;3K|Lk000e1NJLTq000mG000mO1^@s6AM^iV00006VoOIv0RI60
+z0RN!9r;`8x010qNS#tmY4c7nw4c7reD4Tcy000McNliru;S3KCE-N6oD1iU~0WV2J
+zK~y+T-I2XY13?%?&$nZfW)Tq~5D~XfEQExa5EcY~K+p%Uvh@M%tStmzLEFR^@Bt)<
+zO^RU!pTNdcDhU2C?(Wzmva(BT#ZwJ;&b`G9{BMjg+rK$eRbd>*HRs%^_kJIkt#Zbc
+z23oC_an4-;OTc5f@)K1!2U_bR5$OSQqbzMS8rSuD{e3tbzE$)QfOfk*pJiEBMAoaM
+z5!QQu7KUNB-|v5nL+NxnVVb75z~Y2*k-I$4cakJ|00;(y!AqX!o4`$l?15+CvyiO@
+zL2wzzaSb2<NRs3}ilPk>IR>(V{A8`2iK3_mtcb_~a0O`R+#!tKporFb4d?+2z@xRc
+z^o_=tUGM#gwN{q~0GiF_v{LFE*s2-;Fvct^rCzJ<zR_CmO%(nFUl~taZia}`(*OVf
+M07*qoM6N<$g3m>)wg3PC
+
+diff --git a/comm-esr60/comm/mail/base/content/RepondreATous.png b/comm-esr60/comm/mail/base/content/RepondreATous.png
+new file mode 100644
+index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..6f4f53a2f70581397e07703a18362d4f258bf853
+GIT binary patch
+literal 475
+zc$@*-0VMv3P)<h;3K|Lk000e1NJLTq000mG000mO1^@s6AM^iV00006VoOIv0RI60
+z0RN!9r;`8x010qNS#tmY4c7nw4c7reD4Tcy000McNliru;S3KCF9LfJfvf-k0cc4?
+zK~y+T-IBj+Q*ji<Kli>TuQ4bHQiSK`R0NTHUnU114&tm`o!U*%!N0(*&UG+WaL`Su
+zQ^loICTV_5agZ)9k&-pT_u<pyl0t|{SHaJAFXx=$o(umUA%wdN^V6~{*H-D%IpJks
+z54Z;0D9dtfI-P!&bbB(HbXElzK&#cdXJ&7JOwyLSSCZZX=K*4j7e=GebXkCh5O&P$
+z0Qm0iMUo^BBpsZZ0UC|QcDvoaxh%j!2)}?AX_|KGx;_N1EECSCBz<Z&n~%EP?hk+@
+z&+`~#eD3bwfJ<kX0a7#DsO$Pkp65s7@%Y$62)}_{GuxAN2&^wLirKy9_?czdh6B66
+zV@a<i-7>TNMR$zxV!z){fIGlTGdls!RaN!zw1xX-_6l%GTaprYe+Oi<fWKNOisGT9
+zjspw^gZ(s3ubbHyGkZ214nF`_C4FTDy<YDv&|2JkQ52i=ix9%jS)cgt`2(9+h4o_&
+RwI%=n002ovPDHLkV1fqZ&IkYi
+
+diff --git a/comm-esr60/comm/mail/base/content/Supprimer.png b/comm-esr60/comm/mail/base/content/Supprimer.png
+new file mode 100644
+index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..e0e87a52b3207f763a2d927a05e0ba300a25ab83
+GIT binary patch
+literal 343
+zc%17D@N?(olHy`uVBq!ia0vp^0wB!61|;P_|4#%`Y)RhkE)4%caKYZ?lYt_f1s;*b
+zKpodXn9)gNb_Gz7y~NYkmHi<PKfkUv_ta`9pwJUf7sn6_|GSeE{hS>|T+jbrzpg|w
+z!>CfS+2Lv_vqGSUNc4dQWeb_Esasb5;7(vZ%D8W4x8#Zc`{kWPIm6Fd7Z;@)N&a|!
+zL&8T>cIWS<OPagx-Tj-kH_o2_?nwcL88_E1shmDFDDA+@zTZ1NH0SR4E#h#A)xdD`
+zZ>xAl{j_fpr{ivKi*<a?=6l)3!|Kg8?<k&Un_uZQK8|agIoEsEr`>ycFU|REqqI%%
+zqP3)gl9=GevzFiQEqlqgbP8L6r!8N=%<$*h){pl6WM{qq_sH&!9dZwD&al?GG2`at
+k84;T&ZTXp4|G$Qz_m=l5w`o3;fc|ChboFyt=akR{02u^~LI3~&
+
+diff --git a/comm-esr60/comm/mail/base/content/Transferer.png b/comm-esr60/comm/mail/base/content/Transferer.png
+new file mode 100644
+index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..7842b008aea5a38e61385ab8756ebbabaad99a2b
+GIT binary patch
+literal 326
+zc%17D@N?(olHy`uVBq!ia0vp^0wB!61|;P_|4#%`Y)RhkE)4%caKYZ?lYt_f1s;*b
+zKpodXn9)gNb_Gz7y~NYkmHi<PKfj*n!<(jBK%vW?E{-7<{&y#>&p+fK(Kdg&iLb!r
+z(^sA?uM!W+O6NSul2p`ZpHhFq#>ZD-dFCbgqDcuJ7k13bU#8r%b@4%+hk@napVSuL
+zfBN84;W=K$tv};t|8To>rP|(m(vtg6{Kc;LtXlP}<MEGQ5ggyH*ZdS^R=LY;{<SPM
+zZSf)vyYF%bEX}8VxfgQbfZwIyX{p>V><%f0r<wIHdLedB`-bPNDXBZzI9?s*HOS}W
+zY1m!0*JyL#yyy1!AL#G-zW#vm2A-w|hQ62IE_`owC|aV8|M)|{IlnsppBMMjGKr2@
+S?KTPMJqAx#KbLh*2~7YZq={ny
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+@@ -3730,6 +3730,40 @@
+     aMenuPopup._currentPopup = aEvent.target;
+ }
+ 
++/* mantis 0004769: Simplification du menu contextuel associé aux messages
++  "Nouveau message aux mêmes destinataires" 
++  modifier le comportement pour que ne soient pas repris le corps ni les PJ du message
++*/
++function NouveauMsgMemeDest(){
++  
++  let msgFolder=gFolderDisplay ? GetFirstSelectedMsgFolder() : null;
++  let msghdr=gFolderDisplay ? gFolderDisplay.selectedMessage : null;
++  
++  if (null==msghdr){
++    return;
++  }
++  
++  let recipients=msghdr.recipients;
++  
++  let params=Components.classes["@mozilla.org/messengercompose/composeparams;1"].createInstance(Components.interfaces.nsIMsgComposeParams);
++  
++  if (params) {
++    
++    params.type=Components.interfaces.nsIMsgCompType.Template;
++    params.format=Components.interfaces.nsIMsgCompFormat.Default;
++    params.identity=getIdentityForHeader(msghdr);
++        
++    var composeFields=Components.classes["@mozilla.org/messengercompose/composefields;1"].createInstance(Components.interfaces.nsIMsgCompFields);
++    if (composeFields) {
++      composeFields.to=msghdr.recipients;
++      composeFields.cc=msghdr.ccList;
++      //composeFields.bcc=msghdr.bccList;//caché
++      params.composeFields=composeFields;
++      MailServices.compose.OpenComposeWindowWithParams(null, params);
++    }
++  }
++}
++
+ /**
+  *  Generates menu items for opening preferences dialog/tab for each installed addon.
+  *
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+@@ -725,6 +725,7 @@
+     <menuitem id="mailContext-openNewWindow"
+               label="&contextOpenNewWindow.label;"
+               accesskey="&contextOpenNewWindow.accesskey;"
++              hidden="true"
+               oncommand="MsgOpenNewWindowForMessage();"/>
+     <menuitem id="mailContext-openConversation"
+               label="&contextOpenConversation.label;"
+@@ -742,22 +743,31 @@
+     <menuitem id="mailContext-replySender"
+               label="&contextReplySender.label;"
+               accesskey="&contextReplySender.accesskey;"
++              class="menuitem-iconic"
++              image="Repondre.png"
+               oncommand="MsgReplySender(event);"/>
+     <menuitem id="mailContext-replyAll"
+               label="&contextReplyAll.label;"
+               accesskey="&contextReplyAll.accesskey;"
++              class="menuitem-iconic"
++              image="RepondreATous.png"
+               oncommand="MsgReplyToAllMessage(event);"/>
+     <menuitem id="mailContext-replyList"
+               label="&contextReplyList.label;"
+               accesskey="&contextReplyList.accesskey;"
++              hidden="true"
+               oncommand="MsgReplyToListMessage(event);"/>
++    <!--          
+     <menuitem id="mailContext-forward"
+               label="&contextForward.label;"
+               accesskey="&contextForward.accesskey;"
+               oncommand="MsgForwardMessage(event);"/>
+-    <menu id="mailContext-forwardAsMenu"
+-          label="&contextForwardAsMenu.label;"
+-          accesskey="&contextForwardAsMenu.accesskey;">
++              -->
++    <menu id="mailContext-forward"
++          label="&contextForward.label;"
++          class="menu-iconic"
++          image="Transferer.png"
++          accesskey="&contextForward.accesskey;">
+       <menupopup id="mailContext-forwardAsPopup">
+         <menuitem id="mailContext-forwardAsInline"
+                   label="&contextForwardAsInline.label;"
+@@ -779,7 +789,9 @@
+     <menuitem id="mailContext-editAsNew"
+               label="&contextEditMsgAsNew.label;"
+               accesskey="&contextEditMsgAsNew.accesskey;"
+-              oncommand="MsgEditMessageAsNew(event);"/>
++              class="menuitem-iconic"
++              image="Nouveaumessage.png"
++              oncommand="NouveauMsgMemeDest();"/>
+     <menuseparator id="mailContext-sep-reply"/>
+     <menu id="mailContext-tags" label="&tagMenu.label;" accesskey="&tagMenu.accesskey;">
+       <menupopup id="mailContext-tagpopup"
+@@ -881,10 +893,12 @@
+               command="cmd_moveToFolderAgain"
+               label="&moveToFolderAgain.label;"
+               accesskey="&moveToFolderAgain.accesskey;"/>
+-
++<!--
+     <menuitem id="mailContext-delete"
++              class="menuitem-iconic"
++              image="Supprimer.png"
+               command="cmd_delete"/>
+-
++-->
+     <menuseparator id="paneContext-afterMove"/>
+     <menuitem id="mailContext-ignoreThread"
+               label="&contextKillThreadMenu.label;"
+@@ -902,16 +916,25 @@
+     <menuitem id="mailContext-saveAs"
+               label="&contextSaveAs.label;"
+               accesskey="&contextSaveAs.accesskey;"
++              class="menuitem-iconic"
++              image="Enregistrer.png"
+               oncommand="MsgSaveAsFile();"/>
++    <menuitem id="mailContext-delete"
++              class="menuitem-iconic"
++              image="Supprimer.png"
++              command="cmd_delete"/>              
+     <menuitem id="mailContext-printpreview"
+               label="&contextPrintPreview.label;"
+               accesskey="&contextPrintPreview.accesskey;"
+               observes="cmd_printpreview"
++              class="menuitem-iconic"
++              image="Imprimer.png "
+               command="cmd_printpreview"/>
+     <menuitem id="mailContext-print"
+               label="&contextPrint.label;"
+               accesskey="&contextPrint.accesskey;"
+               observes="cmd_print"
++              hidden="true"
+               command="cmd_print"/>
+ 
+     <menuitem id="downloadSelected"
+diff --git a/comm-esr60/comm/mail/base/content/nsContextMenu.js b/comm-esr60/comm/mail/base/content/nsContextMenu.js
+--- a/comm-esr60/comm/mail/base/content/nsContextMenu.js
++++ b/comm-esr60/comm/mail/base/content/nsContextMenu.js
+@@ -283,8 +283,8 @@
+ 
+     // Show the Open in New Window and New Tab options if there is exactly one
+     // message selected.
+-    this.showItem("mailContext-openNewWindow",
+-                  this.numSelectedMessages == 1 && this.inThreadPane);
++    /*this.showItem("mailContext-openNewWindow",
++                  this.numSelectedMessages == 1 && this.inThreadPane);*/
+     this.showItem("threadPaneContext-openNewTab",
+                   this.numSelectedMessages == 1 && this.inThreadPane);
+ 
+@@ -298,9 +298,9 @@
+     this.setSingleSelection("mailContext-replySender");
+     this.setSingleSelection("mailContext-replyNewsgroup", this.isNewsgroup);
+     this.setSingleSelection("mailContext-replyAll");
+-    this.setSingleSelection("mailContext-replyList");
++    //this.setSingleSelection("mailContext-replyList");
+     this.setSingleSelection("mailContext-forward");
+-    this.setSingleSelection("mailContext-forwardAsMenu");
++    //this.setSingleSelection("mailContext-forwardAsMenu");
+     this.setSingleSelection("mailContext-editAsNew");
+     this.setSingleSelection("mailContext-editDraftMsg",
+                             document.getElementById("cmd_editDraftMsg")
+@@ -378,7 +378,7 @@
+ 
+     // XXX Not quite modifying the message, but the same rules apply at the
+     // moment as we can't print non-message content from the message pane yet.
+-    this.showItem("mailContext-print", msgModifyItems);
++    //this.showItem("mailContext-print", msgModifyItems);
+ 
+     this.showItem("mailContext-delete",
+                   msgModifyItems && (this.isNewsgroup || canMove));
+diff --git a/comm-esr60/comm/mail/base/jar.mn b/comm-esr60/comm/mail/base/jar.mn
+--- a/comm-esr60/comm/mail/base/jar.mn
++++ b/comm-esr60/comm/mail/base/jar.mn
+@@ -129,6 +129,13 @@
+     content/messenger/sanitizeDialog.css            (content/sanitizeDialog.css)
+     content/messenger/sanitizeDialog.js             (content/sanitizeDialog.js)
+ *   content/messenger/toolbarIconColor.js           (content/toolbarIconColor.js)
++    content/messenger/Enregistrer.png               (content/Enregistrer.png)
++    content/messenger/Imprimer.png                  (content/Imprimer.png)
++    content/messenger/Nouveaumessage.png            (content/Nouveaumessage.png)
++    content/messenger/Repondre.png                  (content/Repondre.png)
++    content/messenger/RepondreATous.png             (content/RepondreATous.png)
++    content/messenger/Supprimer.png                 (content/Supprimer.png)
++    content/messenger/Transferer.png                (content/Transferer.png)
+ # the following files are mail-specific overrides
+ *   content/messenger/license.html                  (/@mozreltopsrcdir@/toolkit/content/license.html)
+ % override chrome://global/content/license.html chrome://messenger/content/license.html
+diff --git a/fr-esr60/fr/mail/chrome/messenger/messenger.dtd b/fr-esr60/fr/mail/chrome/messenger/messenger.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/messenger.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/messenger.dtd
+@@ -93,7 +93,7 @@
+ <!ENTITY printSetupCmd.accesskey "g">
+ 
+ <!-- Edit Menu -->
+-<!ENTITY deleteMsgCmd.label "Supprimer le message">
++<!ENTITY deleteMsgCmd.label "Supprimer">
+ <!ENTITY deleteMsgCmd.accesskey "S">
+ <!ENTITY undeleteMsgCmd.label "Restaurer le message">
+ <!ENTITY undeleteMsgCmd.accesskey "R">
+@@ -759,22 +759,22 @@
+      enable copy/paste of message, this key would probably need to be changed. -->
+ <!ENTITY contextOpenNewTab.label "Ouvrir dans un nouvel onglet">
+ <!ENTITY contextOpenNewTab.accesskey "u">
+-<!ENTITY contextOpenConversation.label "Ouvrir le message dans la discussion">
++<!ENTITY contextOpenConversation.label "Ouvrir dans la discussion">
+ <!ENTITY contextOpenConversation.accesskey "v">
+ <!ENTITY contextOpenContainingFolder.label "Ouvrir le message dans le dossier qui le contient">
+ <!ENTITY contextOpenContainingFolder.accesskey "i">
+-<!ENTITY contextEditMsgAsNew.label "Modifier comme un nouveau message">
++<!ENTITY contextEditMsgAsNew.label "Nouveau message aux mêmes destinataires">
+ <!ENTITY contextEditMsgAsNew.accesskey "e">
+ <!ENTITY contextEditDraftMsg.label "Modifier le brouillon">
+ <!ENTITY contextEditTemplate.label "Éditer le modèle">
+ <!ENTITY contextEditTemplate.accesskey "t">
+ <!ENTITY contextArchive.label "Archiver">
+ <!ENTITY contextArchive.accesskey "h">
+-<!ENTITY contextReplySender.label "Répondre à l’expéditeur">
++<!ENTITY contextReplySender.label "Répondre">
+ <!ENTITY contextReplySender.accesskey "x">
+ <!ENTITY contextReplyNewsgroup2.label "Faire suivre au groupe">
+ <!ENTITY contextReplyNewsgroup2.accesskey "g">
+-<!ENTITY contextReplyAll.label "Répondre à tout le monde">
++<!ENTITY contextReplyAll.label "Répondre à tous">
+ <!ENTITY contextReplyAll.accesskey "t">
+ <!ENTITY contextReplyList.label "Répondre à la liste">
+ <!ENTITY contextReplyList.accesskey "l">
+@@ -782,10 +782,10 @@
+ <!ENTITY contextForward.accesskey "f">
+ <!ENTITY contextForwardAsMenu.label "Transférer au format">
+ <!ENTITY contextForwardAsMenu.accesskey "m">
+-<!ENTITY contextForwardAsInline.label "Intégré">
+-<!ENTITY contextForwardAsInline.accesskey "I">
+-<!ENTITY contextForwardAsAttachmentItem.label "Pièce jointe">
+-<!ENTITY contextForwardAsAttachmentItem.accesskey "P">
++<!ENTITY contextForwardAsInline.label "Transférer">
++<!ENTITY contextForwardAsInline.accesskey "T">
++<!ENTITY contextForwardAsAttachmentItem.label "Transférer en tant que pièce jointe">
++<!ENTITY contextForwardAsAttachmentItem.accesskey "p">
+ <!ENTITY contextMultiForwardAsAttachment.label "Transférer au format pièce jointe">
+ <!ENTITY contextMultiForwardAsAttachment.accesskey "p">
+ <!ENTITY contextMoveMsgMenu.label "Déplacer vers">
+@@ -808,8 +808,8 @@
+ <!ENTITY contextSaveAs.accesskey "r">
+ <!ENTITY contextPrint.label "Imprimer…">
+ <!ENTITY contextPrint.accesskey "p">
+-<!ENTITY contextPrintPreview.label "Aperçu avant impression">
+-<!ENTITY contextPrintPreview.accesskey "o">
++<!ENTITY contextPrintPreview.label "Imprimer…">
++<!ENTITY contextPrintPreview.accesskey "p">
+ 
+ <!-- Thread Pane Column Picker -->
+ <!-- LOCALIZATION NOTE (columnPicker.resetToInbox.label):

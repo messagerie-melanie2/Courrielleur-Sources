@@ -1,0 +1,31 @@
+# HG changeset patch
+# User pm
+# Date 1459520109 -7200
+#      Fri Apr 01 16:15:09 2016 +0200
+# Node ID 1d9fbd476a1fba88bc23d6a113930c613c58653b
+# Parent  39cc658aab40417bd06f0502b19fb13771b27cdf
+Affichage des colonnes des dossiers (mantis 0004201)
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -229,7 +229,7 @@
+ 
+ pref("mail.folder.views.version", 0);
+ 
+-pref("mail.folderpane.showColumns", false);
++pref("mail.folderpane.showColumns", true);
+ // Force the unit shown for the size of all folders. If empty, the unit
+ // is determined automatically for each folder. Allowed values: KB/MB/<empty string>
+ pref("mail.folderpane.sizeUnits", "");
+diff --git a/comm-esr60/comm/mail/base/content/messenger.xul b/comm-esr60/comm/mail/base/content/messenger.xul
+--- a/comm-esr60/comm/mail/base/content/messenger.xul
++++ b/comm-esr60/comm/mail/base/content/messenger.xul
+@@ -388,7 +388,6 @@
+                            label2="&folderSizeColumn.label;"
+                            tooltiptext="&folderSizeColumn.label;"
+                            hideheader="true"
+-                           hidden="true"
+                            persist="width hidden hiddeninactive"
+                            width="50"
+                            selectable="false"/>

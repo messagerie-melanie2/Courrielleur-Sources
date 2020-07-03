@@ -1,0 +1,27 @@
+# HG changeset patch
+# User pm
+# Date 1497882493 -7200
+#      Mon Jun 19 16:28:13 2017 +0200
+# Node ID 1b9e43c3d2d9fc06c78f5828dab1ba3d40cc7b18
+# Parent  de79fa8fb224adc721f6c74a9a44ab5f7dc3d123
+Ticket mantis 0004097: L'usage du proxy pas du MEDDE ralenti le chargement du Courrielleur v6 (delai fixe par preference)
+
+diff --git a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+--- a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
++++ b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+@@ -638,10 +638,13 @@
+   //  calculation, but that was ugly.  Also, in theory we will open the window
+   //  faster if we let the event loop start doing things sooner.
+ 
++  // mantis 0004097: L'usage du proxy pas du MEDDE ralenti le chargement du Courrielleur v6
++  // 0 => 2000
++  var delaicm2=Services.prefs.getIntPref("courrielleur.delai.start")*1000;
+   if (startMsgHdr)
+-    window.setTimeout(loadStartMsgHdr, 0, startMsgHdr);
++    window.setTimeout(loadStartMsgHdr, delaicm2, startMsgHdr);
+   else
+-    window.setTimeout(loadStartFolder, 0, startFolderURI);
++    window.setTimeout(loadStartFolder, delaicm2, startFolderURI);  
+ }
+ 
+ function HandleAppCommandEvent(evt)

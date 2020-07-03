@@ -1,0 +1,21 @@
+# HG changeset patch
+# User pm
+# Date 1526645625 -7200
+#      Fri May 18 14:13:45 2018 +0200
+# Node ID 60fd18e0cd5243401e830f5bb2a9ac9f2538f577
+# Parent  9226723e7719a88dc36c4b0e6c90a1a1c7133294
+Ticket mantis 3835 - mail.server.default.using_subscription a false
+
+diff --git a/comm-esr60/comm/mailnews/mailnews.js b/comm-esr60/comm/mailnews/mailnews.js
+--- a/comm-esr60/comm/mailnews/mailnews.js
++++ b/comm-esr60/comm/mailnews/mailnews.js
+@@ -485,7 +485,8 @@
+ pref("mail.server.default.dup_action", 0);
+ pref("mail.server.default.hidden", false);
+ 
+-pref("mail.server.default.using_subscription", true);
++//mantis 3835 : true => false
++pref("mail.server.default.using_subscription", false);
+ pref("mail.server.default.dual_use_folders", true);
+ pref("mail.server.default.canDelete", false);
+ pref("mail.server.default.login_at_startup", false);

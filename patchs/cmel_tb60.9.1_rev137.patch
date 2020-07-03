@@ -1,0 +1,20 @@
+# HG changeset patch
+# User Ludovic <>
+# Date 1582036699 -3600
+#      Tue Feb 18 15:38:19 2020 +0100
+# Node ID aef2d517987f087f49c507eed1ef017d8be0b46e
+# Parent  753d946fb5034e3e7af048c4fc90ca69c72aeff8
+Ticket mantis 0005519: Icônes Windows 10 incorrectes (révision)
+
+diff --git a/comm-esr60/comm/courrielleurm2/branding/thunderbird.VisualElementsManifest.xml b/comm-esr60/comm/courrielleurm2/branding/thunderbird.VisualElementsManifest.xml
+old mode 100755
+new mode 100644
+--- a/comm-esr60/comm/courrielleurm2/branding/thunderbird.VisualElementsManifest.xml
++++ b/comm-esr60/comm/courrielleurm2/branding/thunderbird.VisualElementsManifest.xml
+@@ -4,5 +4,5 @@
+       Square150x150Logo='VisualElements\VisualElements_150.png'
+       Square70x70Logo='VisualElements\VisualElements_70.png'
+       ForegroundText='dark'
+-      BackgroundColor='#c4d3d3'/>
++      BackgroundColor='#ffffff'/>
+ </Application>

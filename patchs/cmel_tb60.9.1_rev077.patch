@@ -1,0 +1,40 @@
+# HG changeset patch
+# User pm
+# Date 1478170171 -3600
+#      Thu Nov 03 11:49:31 2016 +0100
+# Node ID e7121ac41bd5fa1195215e571349a906076b2fe4
+# Parent  972b9404f2d5d65cc9ee11643aa64387e9cbb46b
+Ticket mantis 0004355 : Non affichage des etiquettes dans une BALP
+
+diff --git a/comm-esr60/comm/mailnews/imap/src/nsImapMailFolder.cpp b/comm-esr60/comm/mailnews/imap/src/nsImapMailFolder.cpp
+--- a/comm-esr60/comm/mailnews/imap/src/nsImapMailFolder.cpp
++++ b/comm-esr60/comm/mailnews/imap/src/nsImapMailFolder.cpp
+@@ -4814,8 +4814,13 @@
+     if (existingProperty.IsEmpty())
+       dbHdr->SetStringProperty("junkscoreorigin", "imapflag");
+   }
++  // mantis 0004355: Non affichage des etiquettes dans une BALP
++  /*
+   return (userFlags & kImapMsgSupportUserFlag) ?
+           dbHdr->SetStringProperty("keywords", keywords.get()) : NS_OK;
++          */
++  return dbHdr->SetStringProperty("keywords", keywords.get());
++  // fin mantis 0004355
+ }
+ 
+ // synchronize the message flags in the database with the server flags
+@@ -4897,6 +4902,14 @@
+ 
+   uint32_t supportedFlags;
+   GetSupportedUserFlags(&supportedFlags);
++  
++  // mantis 0004355: Non affichage des etiquettes dans une BALP
++  supportedFlags |= kImapMsgSupportUserFlag;
++  supportedFlags |= kImapMsgSupportForwardedFlag;
++  supportedFlags |= kImapMsgSupportMDNSentFlag;
++  supportedFlags |= kImapMsgLabelFlags;
++  // fin mantis 0004355
++  
+   if (supportedFlags & kImapMsgSupportForwardedFlag)
+     database->MarkForwarded(msgKey, (flags & kImapMsgForwardedFlag) != 0, nullptr);
+   // this turns on labels, but it doesn't handle the case where the user

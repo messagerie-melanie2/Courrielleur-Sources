@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1562337882 -7200
+#      Fri Jul 05 16:44:42 2019 +0200
+# Node ID 1d82aaa761dc2df63d26971fb901e82d38a99d24
+# Parent  c406c39850a98966e5097b0e1e9656fcd0422f48
+Ajout de l'identifiant menu_attachPage dans messengercompose.xul
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/messengercompose.xul b/comm-esr60/comm/mail/components/compose/content/messengercompose.xul
+--- a/comm-esr60/comm/mail/components/compose/content/messengercompose.xul
++++ b/comm-esr60/comm/mail/components/compose/content/messengercompose.xul
+@@ -648,7 +648,7 @@
+                     command="cmd_attachCloud">
+                 <menupopup onpopupshowing="addAttachCloudMenuItems(this);"/>
+               </menu>
+-              <menuitem label="&attachPageCmd.label;" accesskey="&attachPageCmd.accesskey;" command="cmd_attachPage"/>
++              <menuitem id="menu_attachPage" label="&attachPageCmd.label;" accesskey="&attachPageCmd.accesskey;" command="cmd_attachPage"/>
+               <menuseparator/>
+               <menuitem type="checkbox" label="&attachVCardCmd.label;" accesskey="&attachVCardCmd.accesskey;" command="cmd_attachVCard"/>
+               <menuseparator id="menu_Attach_RemindLaterSeparator"/>

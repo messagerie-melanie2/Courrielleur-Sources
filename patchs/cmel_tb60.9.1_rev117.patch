@@ -1,0 +1,100 @@
+# HG changeset patch
+# User pm
+# Date 1553528624 -3600
+#      Mon Mar 25 16:43:44 2019 +0100
+# Node ID 5d64916d7df0b761fadd677c1883655d7bb5220c
+# Parent  8ecd200268ac5269f0a8e91702d5800d0e2d627a
+Ticket mantis 0005215 : Changement de nom de Mélanie2
+
+diff --git a/comm-esr60/comm/courrielleurm2/branding/branding.nsi b/comm-esr60/comm/courrielleurm2/branding/branding.nsi
+--- a/comm-esr60/comm/courrielleurm2/branding/branding.nsi
++++ b/comm-esr60/comm/courrielleurm2/branding/branding.nsi
+@@ -39,8 +39,8 @@
+ 
+ # BrandFullNameInternal is used for some registry and file system values
+ # instead of BrandFullName and typically should not be modified.
+-!define BrandFullNameInternal "Courrielleur Melanie2"
+-!define BrandFullName         "Courrielleur Mélanie2"
++!define BrandFullNameInternal "Courrielleur Mel"
++!define BrandFullName         "Courrielleur Mél"
+ !define CompanyName           "PNE Annuaire et Messagerie"
+ !define URLInfoAbout          "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
+ !define URLUpdateInfo         "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
+diff --git a/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.dtd b/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.dtd
+--- a/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.dtd
++++ b/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.dtd
+@@ -3,7 +3,7 @@
+    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+ <!ENTITY  brandShortName        "Courrielleur">
+ <!ENTITY  brandShorterName      "Courrielleur">
+-<!ENTITY  brandFullName         "Courrielleur Mélanie2">
++<!ENTITY  brandFullName         "Courrielleur Mél">
+ <!ENTITY  vendorShortName       "PNE Annuaire et Messagerie">
+ <!ENTITY  trademarkInfo.part1   "Mozilla Thunderbird and the Thunderbird logos
+                                  are trademarks of the Mozilla Foundation.">
+diff --git a/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.properties b/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.properties
+--- a/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.properties
++++ b/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.properties
+@@ -3,5 +3,5 @@
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ brandShortName=Courrielleur
+ brandShorterName=Courrielleur
+-brandFullName=Courrielleur Mélanie2
++brandFullName=Courrielleur Mél
+ vendorShortName=PNE Annuaire et Messagerie
+diff --git a/comm-esr60/comm/mail/installer/windows/app.tag b/comm-esr60/comm/mail/installer/windows/app.tag
+--- a/comm-esr60/comm/mail/installer/windows/app.tag
++++ b/comm-esr60/comm/mail/installer/windows/app.tag
+@@ -1,4 +1,4 @@
+ ;!@Install@!UTF-8!
+-Title="Courrielleur Melanie2"
++Title="Courrielleur Mel"
+ RunProgram="setup.exe"
+ ;!@InstallEnd@!
+\ No newline at end of file
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in b/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
+--- a/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
++++ b/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
+@@ -17,12 +17,12 @@
+ !define AppRegNameMail        "Courrielleur"
+ !define AppRegNameNews        "Courrielleur (News)"
+ 
+-!define ClientsRegName        "Courrielleur Melanie2"
++!define ClientsRegName        "Courrielleur Mel"
+ 
+ !define BrandShortName        "Courrielleur"
+ !define PreReleaseSuffix      ""
+ !ifndef BrandFullName
+-!define BrandFullName         "Courrielleur Mélanie2"
++!define BrandFullName         "Courrielleur Mél"
+ !endif
+ 
+ !define CERTIFICATE_NAME            "Mozilla Corporation"
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi b/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
+--- a/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
++++ b/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
+@@ -261,7 +261,7 @@
+   ${un.RegCleanMain} "Software\PAMELA"
+   ${un.RegCleanUninstall}
+   ${un.DeleteShortcuts}
+-  ; suppression groupe de menus 'Courrielleur Mélanie2'
++  ; suppression groupe de menus 'Courrielleur Mél'
+   StrCpy $0 "$INSTDIR\uninstall\${SHORTCUTS_LOG}"
+   ${If} ${FileExists} "$0"
+     ${un.GetLongPath} "$SMPROGRAMS" $1
+diff --git a/comm-esr60/toolkit/mozapps/installer/package-name.mk b/comm-esr60/toolkit/mozapps/installer/package-name.mk
+--- a/comm-esr60/toolkit/mozapps/installer/package-name.mk
++++ b/comm-esr60/toolkit/mozapps/installer/package-name.mk
+@@ -41,10 +41,10 @@
+ MOZ_PKG_PLATFORM := $(MOZ_PKG_PLATFORM)-$(MOZ_PKG_SPECIAL)
+ endif
+ 
+-MOZ_PKG_DIR ?= CourrielleurMelanie2
++MOZ_PKG_DIR ?= CourrielleurMel
+ 
+ ifndef MOZ_PKG_APPNAME
+-MOZ_PKG_APPNAME = CourrielleurMelanie2
++MOZ_PKG_APPNAME = CourrielleurMel
+ endif
+ 
+ ifdef MOZ_SIMPLE_PACKAGE_NAME

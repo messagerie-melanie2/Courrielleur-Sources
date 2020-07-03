@@ -1,0 +1,42 @@
+# HG changeset patch
+# User pm
+# Date 1478169924 -3600
+#      Thu Nov 03 11:45:24 2016 +0100
+# Node ID 972b9404f2d5d65cc9ee11643aa64387e9cbb46b
+# Parent  7cb1667da5ff59dd9b1aad40643a38dc0419b627
+Les pj avec le content-type (errone) x-moz-deleted ne sont plus accessibles
+
+diff --git a/comm-esr60/comm/mailnews/mime/src/mimehdrs.cpp b/comm-esr60/comm/mailnews/mime/src/mimehdrs.cpp
+--- a/comm-esr60/comm/mailnews/mime/src/mimehdrs.cpp
++++ b/comm-esr60/comm/mailnews/mime/src/mimehdrs.cpp
+@@ -128,16 +128,25 @@
+ 
+   /* Tack this data on to the end of our copy.
+    */
+-  desired_size = hdrs->all_headers_fp + size + 1;
++  // mantis 4364 - Les pj avec le content-type (erroné) x-moz-deleted ne sont plus accessibles
++  const char *txt=buffer;
++  int32_t taille=size;
++  if (0==strcmp(buffer, "Content-Type: text/x-moz-deleted;" MSG_LINEBREAK)){
++    taille=strlen("Content-Type: toto;" MSG_LINEBREAK);
++    txt="Content-Type: toto;" MSG_LINEBREAK;
++  }
++  
++  desired_size = hdrs->all_headers_fp + taille + 1;
+   if (desired_size >= hdrs->all_headers_size)
+   {
+     status = mime_GrowBuffer (desired_size, sizeof(char), 255,
+                  &hdrs->all_headers, &hdrs->all_headers_size);
+-    if (status < 0) return status;
++    if (status < 0) 
++      return status;
+   }
+-  memcpy(hdrs->all_headers+hdrs->all_headers_fp, buffer, size);
+-  hdrs->all_headers_fp += size;
+-
++  memcpy(hdrs->all_headers+hdrs->all_headers_fp, txt, taille);
++  hdrs->all_headers_fp += taille;
++      
+   return 0;
+ }
+ 

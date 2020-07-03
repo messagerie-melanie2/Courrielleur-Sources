@@ -1,0 +1,171 @@
+# HG changeset patch
+# User pm
+# Date 1526650763 -7200
+#      Fri May 18 15:39:23 2018 +0200
+# Node ID 5cd344d2cb835af22898661ee89d3a1bcb9a2175
+# Parent  63a5bda32a1bbc1afcd90c9e5ccbb9ea06f22961
+Ticket mantis 0002945: L'importation des carnets d'adresses ne conserve que 2 adresses de messageries par contact
+
+diff --git a/comm-esr60/comm/mailnews/addrbook/public/nsIAbCard.idl b/comm-esr60/comm/mailnews/addrbook/public/nsIAbCard.idl
+--- a/comm-esr60/comm/mailnews/addrbook/public/nsIAbCard.idl
++++ b/comm-esr60/comm/mailnews/addrbook/public/nsIAbCard.idl
+@@ -308,6 +308,7 @@
+ #define kSpouseNameProperty         "SpouseName"
+ #define kFamilyNameProperty         "FamilyName"
+ #define k2ndEmailProperty           "SecondEmail"
++#define k3rdEmailProperty           "ThirdEmail"
+ 
+ #define kHomeAddressProperty        "HomeAddress"
+ #define kHomeAddress2Property       "HomeAddress2"
+diff --git a/comm-esr60/comm/mailnews/addrbook/public/nsIAddrDatabase.idl b/comm-esr60/comm/mailnews/addrbook/public/nsIAddrDatabase.idl
+--- a/comm-esr60/comm/mailnews/addrbook/public/nsIAddrDatabase.idl
++++ b/comm-esr60/comm/mailnews/addrbook/public/nsIAddrDatabase.idl
+@@ -36,6 +36,7 @@
+ // not shown in the UI
+ #define kLowerPriEmailColumn      "LowercasePrimaryEmail"
+ #define kLower2ndEmailColumn      "LowercaseSecondEmail"
++#define kLower3rdEmailColumn      "LowercaseThirdEmail"
+ 
+ // Palm Integration
+ #define  CARD_ATTRIB_PALMID "PalmRecId"
+@@ -217,6 +218,7 @@
+   [noscript] void addNickName(in nsIMdbRow row, in string value);
+   [noscript] void addPrimaryEmail(in nsIMdbRow row, in string value);
+   [noscript] void add2ndEmail(in nsIMdbRow row, in string value);
++  [noscript] void Add3rdEmail(in nsIMdbRow row, in string value);
+   [noscript] void addWorkPhone(in nsIMdbRow row, in string value);
+   [noscript] void addHomePhone(in nsIMdbRow row, in string value);
+   [noscript] void addFaxNumber(in nsIMdbRow row, in string value);
+diff --git a/comm-esr60/comm/mailnews/addrbook/src/nsAbLDIFService.cpp b/comm-esr60/comm/mailnews/addrbook/src/nsAbLDIFService.cpp
+--- a/comm-esr60/comm/mailnews/addrbook/src/nsAbLDIFService.cpp
++++ b/comm-esr60/comm/mailnews/addrbook/src/nsAbLDIFService.cpp
+@@ -571,6 +571,9 @@
+     else if (colType.EqualsLiteral("mozillasecondemail"))
+       aDatabase->Add2ndEmail(newRow, column.get());
+ 
++    else if (colType.EqualsLiteral("mozillathirdemail"))
++      aDatabase->Add3rdEmail(newRow, column.get());
++
+     else if (colType.EqualsLiteral("mozillausehtmlmail"))
+     {
+       ToLowerCase(column);
+diff --git a/comm-esr60/comm/mailnews/addrbook/src/nsAbManager.cpp b/comm-esr60/comm/mailnews/addrbook/src/nsAbManager.cpp
+--- a/comm-esr60/comm/mailnews/addrbook/src/nsAbManager.cpp
++++ b/comm-esr60/comm/mailnews/addrbook/src/nsAbManager.cpp
+@@ -67,6 +67,7 @@
+   {kNicknameProperty, 2103},
+   {kPriEmailProperty, 2104},
+   {k2ndEmailProperty, 2105},
++  {k3rdEmailProperty, 2137},
+   {kScreenNameProperty, 2136},
+   {kPreferMailFormatProperty, 0},
+   {kLastModifiedDateProperty, 0},
+diff --git a/comm-esr60/comm/mailnews/addrbook/src/nsAddrDatabase.cpp b/comm-esr60/comm/mailnews/addrbook/src/nsAddrDatabase.cpp
+--- a/comm-esr60/comm/mailnews/addrbook/src/nsAddrDatabase.cpp
++++ b/comm-esr60/comm/mailnews/addrbook/src/nsAddrDatabase.cpp
+@@ -82,6 +82,7 @@
+       m_NickNameColumnToken(0),
+       m_PriEmailColumnToken(0),
+       m_2ndEmailColumnToken(0),
++      m_3rdEmailColumnToken(0),
+       m_WorkPhoneColumnToken(0),
+       m_HomePhoneColumnToken(0),
+       m_FaxColumnToken(0),
+@@ -874,6 +875,14 @@
+               m_Lower2ndEmailColumnToken);
+             commitRequired = commitRequired || NS_SUCCEEDED(err);
+           }
++
++          err = GetStringColumn(findRow, m_Lower3rdEmailColumnToken, tempString);
++          if (NS_FAILED(err)) // not set yet
++          {
++            err = ConvertAndAddLowercaseColumn(findRow, m_2ndEmailColumnToken,
++              m_Lower3rdEmailColumnToken);
++            commitRequired = commitRequired || NS_SUCCEEDED(err);
++          }
+         }
+         else if (IsListRowScopeToken(rowOid.mOid_Scope))
+         {
+@@ -954,6 +963,8 @@
+       m_mdbStore->StringToToken(m_mdbEnv,  kLowerPriEmailColumn, &m_LowerPriEmailColumnToken);
+       m_mdbStore->StringToToken(m_mdbEnv,  k2ndEmailProperty, &m_2ndEmailColumnToken);
+       m_mdbStore->StringToToken(m_mdbEnv,  kLower2ndEmailColumn, &m_Lower2ndEmailColumnToken);
++      m_mdbStore->StringToToken(m_mdbEnv,  k3rdEmailProperty, &m_3rdEmailColumnToken);
++      m_mdbStore->StringToToken(m_mdbEnv,  kLower3rdEmailColumn, &m_Lower3rdEmailColumnToken);
+       m_mdbStore->StringToToken(m_mdbEnv,  kPreferMailFormatProperty, &m_MailFormatColumnToken);
+       m_mdbStore->StringToToken(m_mdbEnv,  kPopularityIndexProperty, &m_PopularityIndexColumnToken);
+       m_mdbStore->StringToToken(m_mdbEnv,  kWorkPhoneProperty, &m_WorkPhoneColumnToken);
+@@ -2150,6 +2161,19 @@
+ }
+ 
+ /*  value is UTF8 string */
++NS_IMETHODIMP nsAddrDatabase::Add3rdEmail(nsIMdbRow *aRow, const char *aValue)
++{
++  NS_ENSURE_ARG_POINTER(aValue);
++
++  nsresult rv = AddCharStringColumn(aRow, m_3rdEmailColumnToken, aValue);
++  NS_ENSURE_SUCCESS(rv,rv);
++
++  rv = AddLowercaseColumn(aRow, m_Lower3rdEmailColumnToken, aValue);
++  NS_ENSURE_SUCCESS(rv,rv);
++  return rv;
++}
++
++/*  value is UTF8 string */
+ NS_IMETHODIMP nsAddrDatabase::AddListName(nsIMdbRow *aRow, const char *aValue)
+ {
+   NS_ENSURE_ARG_POINTER(aValue);
+diff --git a/comm-esr60/comm/mailnews/addrbook/src/nsAddrDatabase.h b/comm-esr60/comm/mailnews/addrbook/src/nsAddrDatabase.h
+--- a/comm-esr60/comm/mailnews/addrbook/src/nsAddrDatabase.h
++++ b/comm-esr60/comm/mailnews/addrbook/src/nsAddrDatabase.h
+@@ -91,6 +91,8 @@
+   NS_IMETHOD AddPrimaryEmail(nsIMdbRow * row, const char * value) override;
+ 
+   NS_IMETHOD Add2ndEmail(nsIMdbRow * row, const char * value) override;
++  
++  NS_IMETHOD Add3rdEmail(nsIMdbRow * row, const char * value) override;
+ 
+   NS_IMETHOD AddPreferMailFormat(nsIMdbRow * row, uint32_t value) override
+   { return AddIntColumn(row, m_MailFormatColumnToken, value); }
+@@ -355,6 +357,7 @@
+   mdb_token      m_NickNameColumnToken;
+   mdb_token      m_PriEmailColumnToken;
+   mdb_token      m_2ndEmailColumnToken;
++  mdb_token      m_3rdEmailColumnToken;
+   mdb_token      m_DefaultEmailColumnToken;
+   mdb_token      m_CardTypeColumnToken;
+   mdb_token      m_WorkPhoneColumnToken;
+@@ -404,6 +407,7 @@
+   mdb_token      m_RecordKeyColumnToken;
+   mdb_token      m_LowerPriEmailColumnToken;
+   mdb_token      m_Lower2ndEmailColumnToken;
++  mdb_token      m_Lower3rdEmailColumnToken;
+ 
+   mdb_token      m_MailFormatColumnToken;
+   mdb_token     m_PopularityIndexColumnToken;
+diff --git a/comm-esr60/comm/mailnews/mailnews.js b/comm-esr60/comm/mailnews/mailnews.js
+--- a/comm-esr60/comm/mailnews/mailnews.js
++++ b/comm-esr60/comm/mailnews/mailnews.js
+@@ -326,6 +326,7 @@
+ pref("ldap_2.servers.default.attrmap.NickName", "mozillaNickname,xmozillanickname");
+ pref("ldap_2.servers.default.attrmap.PrimaryEmail", "mail");
+ pref("ldap_2.servers.default.attrmap.SecondEmail", "mozillaSecondEmail,xmozillasecondemail");
++pref("ldap_2.servers.default.attrmap.ThirdEmail", "mozillaThirdEmail,xmozillathirdemail");
+ pref("ldap_2.servers.default.attrmap.WorkPhone", "telephoneNumber");
+ pref("ldap_2.servers.default.attrmap.HomePhone", "homePhone");
+ pref("ldap_2.servers.default.attrmap.FaxNumber", "facsimiletelephonenumber,fax");
+diff --git a/fr-esr60/fr/mail/chrome/messenger/importMsgs.properties b/fr-esr60/fr/mail/chrome/messenger/importMsgs.properties
+--- a/fr-esr60/fr/mail/chrome/messenger/importMsgs.properties
++++ b/fr-esr60/fr/mail/chrome/messenger/importMsgs.properties
+@@ -98,6 +98,11 @@
+ # Description: Address book field name
+ ## @name IMPORT_FIELD_DESC
+ ## @loc None
++2137=3ème adresse électronique
++
++# Description: Address book field name
++## @name IMPORT_FIELD_DESC
++## @loc None
+ 2106=Tél. professionnel 
+ 
+ # Description: Address book field name

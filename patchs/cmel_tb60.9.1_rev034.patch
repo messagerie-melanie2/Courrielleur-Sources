@@ -1,0 +1,38 @@
+# HG changeset patch
+# User pm
+# Date 1526645504 -7200
+#      Fri May 18 14:11:44 2018 +0200
+# Node ID f2a28ed36aa7a5434cb5942475bd819121ba5baa
+# Parent  1662347bb9f4e98f978e697a5499053cd60e41f1
+Ticket mantis 0002614: L'enregistrement en fichier .eml de plusieurs messages selectionnes ne traite pas tous les messages
+
+diff --git a/comm-esr60/comm/mail/base/content/mailCommands.js b/comm-esr60/comm/mail/base/content/mailCommands.js
+--- a/comm-esr60/comm/mail/base/content/mailCommands.js
++++ b/comm-esr60/comm/mail/base/content/mailCommands.js
+@@ -409,6 +409,12 @@
+                             .messageURIToMsgHdr(uris[i]);
+ 
+       let nameBase = GenerateFilenameFromMsgHdr(msgHdr);
++      //Bug mantis 2614: L'enregistrement en fichier .eml de plusieurs 
++      //messages selectionnÃ©s ne traite pas tous les messages
++      nameBase = GenerateValidFilename(nameBase, "");
++      if (128 < nameBase.length) {
++        nameBase = nameBase.substr(0, 128);
++      }      
+       let name = GenerateValidFilename(nameBase, ".eml");
+ 
+       let number = 2;
+diff --git a/comm-esr60/comm/mail/base/content/utilityOverlay.js b/comm-esr60/comm/mail/base/content/utilityOverlay.js
+--- a/comm-esr60/comm/mail/base/content/utilityOverlay.js
++++ b/comm-esr60/comm/mail/base/content/utilityOverlay.js
+@@ -141,6 +141,10 @@
+     aFileName = aFileName.replace(/[\*\:\?]+/g, " ");
+     aFileName = aFileName.replace(/[\<]+/g, "(");
+     aFileName = aFileName.replace(/[\>]+/g, ")");
++    //Bug mantis 2614: L'enregistrement en fichier .eml de plusieurs 
++    //messages selectionnés ne traite pas tous les messages
++    aFileName = aFileName.replace(/[\x00-\x1F]+/g, "");
++    //fin Bug mantis 2614:
+   }
+   else if (navigator.appVersion.includes("Macintosh"))
+     re = /[\:\/]+/g;

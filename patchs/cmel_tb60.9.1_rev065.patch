@@ -1,0 +1,32 @@
+# HG changeset patch
+# User pm
+# Date 1466067948 -7200
+#      Thu Jun 16 11:05:48 2016 +0200
+# Node ID c3b4c5afdce4122130bfd64bddfcb58ed47e42e7
+# Parent  e849d5b4e6f27040cb7afb281cde919b51c655a5
+Ticket mantis 4217 : destinataires separes par plusieurs virgules
+
+diff --git a/comm-esr60/comm/mailnews/mime/src/mimeJSComponents.js b/comm-esr60/comm/mailnews/mime/src/mimeJSComponents.js
+--- a/comm-esr60/comm/mailnews/mime/src/mimeJSComponents.js
++++ b/comm-esr60/comm/mailnews/mime/src/mimeJSComponents.js
+@@ -370,6 +370,20 @@
+       let addr;
+       if (comma > 0) {
+         addr = aDisplay.substr(0, comma);
++        //mantis 4217 : destinataires séparés par plusieurs virgules
++        let l=aDisplay.length;
++        let p=comma+1;
++        if (p < l){          
++          let c=aDisplay.charAt(p);
++          while (','==c || ' '==c){
++            if (p+1 >= l)
++              break;
++            comma=p;
++            p++;
++            c=aDisplay.charAt(p);
++          }          
++        }
++        //fin mantis 4217
+         aDisplay = aDisplay.substr(comma + 1);
+       } else {
+         addr = aDisplay;

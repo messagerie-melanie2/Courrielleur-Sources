@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1466068241 -7200
+#      Thu Jun 16 11:10:41 2016 +0200
+# Node ID 1a6773deadffd175ff1bb5f8c90693b4ab10f9ff
+# Parent  c3b4c5afdce4122130bfd64bddfcb58ed47e42e7
+Ticket mantis 0004266 : Erreurs dans la console a l'ouverture du carnet d'adresses
+
+diff --git a/comm-esr60/comm/chat/chat-prefs.js b/comm-esr60/comm/chat/chat-prefs.js
+--- a/comm-esr60/comm/chat/chat-prefs.js
++++ b/comm-esr60/comm/chat/chat-prefs.js
+@@ -6,7 +6,7 @@
+ //  0 = do not connect / show the account manager
+ //  1 = connect automatically
+ //  Other values will be added later, for example to start minimized
+-pref("messenger.startup.action", 1);
++pref("messenger.startup.action", 0);
+ 
+ pref("messenger.accounts", "");
+ 

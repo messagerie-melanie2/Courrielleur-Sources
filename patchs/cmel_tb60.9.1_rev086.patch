@@ -1,0 +1,49 @@
+# HG changeset patch
+# User pm
+# Date 1515077559 -3600
+#      Thu Jan 04 15:52:39 2018 +0100
+# Node ID cfde8ec5c4afa84a416d36e6c2d0a6686b12b67b
+# Parent  a7af425a01a5e96d7e12977f1032d55cdeb791b1
+Ticket mantis 0004770: Envoi d'un message en pièce jointe d'un nouveau message
+
+diff --git a/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.xul b/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.xul
+--- a/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.xul
++++ b/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.xul
+@@ -199,6 +199,7 @@
+               <!-- XXXdmose need to audit our shortcut/a11y setup and make sure
+                    these buttons are doing the right thing -->
+ 
++<!--
+               <toolbarbutton id="hdrForwardButton"
+                              label="&hdrForwardButton1.label;"
+                              tooltiptext="&hdrForwardButton1.tooltip;"
+@@ -206,6 +207,7 @@
+                              observes="button_forward"
+                              class="toolbarbutton-1 msgHeaderView-button hdrForwardButton"/>
+               <toolbaritem id="hdrMenuForwardButton" label="&hdrMenuForwardButton.label;">
++-->
+               <!-- This toolbaritem is a dummy and should only be shown when
+                    customizing the toolbar to distinguish the forward button
+                    from the forward dual-button. -->
+@@ -218,16 +220,18 @@
+                                type="menu-button">
+                   <menupopup id="hdrForwardDropdown">
+                     <menuitem id="hdrForwardAsInlineMenu"
+-                              label="&buttonMenuForwardAsInline.label;"
+-                              tooltiptext="&forwardAsInline.tooltip;"
++                              label="&hdrForwardButton1.label;"
++                              tooltiptext="&hdrForwardButton1.tooltip;"
+                               command="cmd_forwardInline"/>
+                     <menuitem id="hdrForwardAsAttachmentMenu"
+-                              label="&buttonMenuForwardAsAttachment.label;"
++                              label="&contextForwardAsAttachmentItem.label;"
+                               tooltiptext="&forwardAsAttachment.tooltip;"
+                               command="cmd_forwardAttachment"/>
+                   </menupopup>
+                 </toolbarbutton>
++<!--                
+               </toolbaritem>
++-->              
+               <toolbarbutton id="hdrArchiveButton"
+                              label="&hdrArchiveButton1.label;"
+                              tooltiptext="&hdrArchiveButton1.tooltip;"

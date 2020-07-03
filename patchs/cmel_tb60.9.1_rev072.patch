@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1527081775 -7200
+#      Wed May 23 15:22:55 2018 +0200
+# Node ID 7552f294515855d47c98012292841ea16d670ed2
+# Parent  264e6311dfa5af171eab613da7dc0ae2485fe98f
+Ticket mantis 0004145: Synchronisation des etiquettes courrier
+
+diff --git a/comm-esr60/comm/mail/components/preferences/display.xul b/comm-esr60/comm/mail/components/preferences/display.xul
+--- a/comm-esr60/comm/mail/components/preferences/display.xul
++++ b/comm-esr60/comm/mail/components/preferences/display.xul
+@@ -174,7 +174,7 @@
+           <hbox>
+             <listbox id="tagList" flex="1" rows="10" ondblclick="gDisplayPane.editTag();"
+                      onselect="gDisplayPane.onSelect();"/>
+-            <vbox>
++            <vbox id="tagPanelBox">
+               <button label="&newTagButton.label;" accesskey="&newTagButton.accesskey;"
+                       oncommand="gDisplayPane.addTag();"/>
+               <button id="editTagButton" disabled="true"

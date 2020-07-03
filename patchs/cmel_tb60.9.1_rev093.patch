@@ -1,0 +1,715 @@
+# HG changeset patch
+# User pm
+# Date 1560958671 -7200
+#      Wed Jun 19 17:37:51 2019 +0200
+# Node ID ba51a4f90d78809cfa9f7e472c5781fa6a6bada1
+# Parent  4be672dc5ef46569ff198135d21cea4f99a9d00c
+Modifications de l'installateur pour le courrielleur (version TB60)
+
+diff --git a/comm-esr60/comm/mail/installer/windows/Makefile.in b/comm-esr60/comm/mail/installer/windows/Makefile.in
+--- a/comm-esr60/comm/mail/installer/windows/Makefile.in
++++ b/comm-esr60/comm/mail/installer/windows/Makefile.in
+@@ -5,7 +5,7 @@
+ include $(moztopsrcdir)/toolkit/mozapps/installer/package-name.mk
+ 
+ CONFIG_DIR = instgen
+-SFX_MODULE = $(commtopsrcdir)/other-licenses/7zstub/thunderbird/7zSD.sfx
++SFX_MODULE = $(commtopsrcdir)/courrielleurm2/7zstub/7zSD.sfx
+ 
+ INSTALLER_FILES = \
+ 	app.tag \
+diff --git a/comm-esr60/comm/mail/installer/windows/app.tag b/comm-esr60/comm/mail/installer/windows/app.tag
+--- a/comm-esr60/comm/mail/installer/windows/app.tag
++++ b/comm-esr60/comm/mail/installer/windows/app.tag
+@@ -1,4 +1,4 @@
+ ;!@Install@!UTF-8!
+-Title="Mozilla Thunderbird"
++Title="Courrielleur Melanie2"
+ RunProgram="setup.exe"
+ ;!@InstallEnd@!
+\ No newline at end of file
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in b/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
+--- a/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
++++ b/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
+@@ -5,8 +5,8 @@
+ 
+ 
+ # These defines should match application.ini settings
+-!define AppName               "Thunderbird"
+-!define AppVersion            "@MOZ_APP_VERSION@"
++!define AppName               "Courrielleur"
++!define AppVersion            "8.0"
+ 
+ !define GREVersion            @MOZILLA_VERSION@
+ !define AB_CD                 "@AB_CD@"
+@@ -14,15 +14,15 @@
+ !define FileMainEXE           "@MOZ_APP_NAME@.exe"
+ !define WindowClass           "ThunderbirdMessageWindow"
+ 
+-!define AppRegNameMail        "Thunderbird"
+-!define AppRegNameNews        "Thunderbird (News)"
++!define AppRegNameMail        "Courrielleur"
++!define AppRegNameNews        "Courrielleur (News)"
+ 
+-!define ClientsRegName        "Mozilla Thunderbird"
++!define ClientsRegName        "Courrielleur Melanie2"
+ 
+-!define BrandShortName        "@MOZ_APP_DISPLAYNAME@"
+-!define PreReleaseSuffix      "@PRE_RELEASE_SUFFIX@"
++!define BrandShortName        "Courrielleur"
++!define PreReleaseSuffix      ""
+ !ifndef BrandFullName
+-!define BrandFullName         "${BrandFullNameInternal}${PreReleaseSuffix}"
++!define BrandFullName         "Courrielleur Mélanie2"
+ !endif
+ 
+ !define CERTIFICATE_NAME            "Mozilla Corporation"
+@@ -83,7 +83,7 @@
+ VIAddVersionKey "ProductName"     "${BrandShortName}"
+ VIAddVersionKey "CompanyName"     "${CompanyName}"
+ #ifdef MOZ_OFFICIAL_BRANDING
+-VIAddVersionKey "LegalTrademarks" "${BrandShortName} is a Trademark of The Mozilla Foundation."
++VIAddVersionKey "LegalTrademarks" "${BrandShortName}"
+ #endif
+ VIAddVersionKey "LegalCopyright"  "${CompanyName}"
+ VIAddVersionKey "FileVersion"     "${AppVersion}"
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/installer.nsi b/comm-esr60/comm/mail/installer/windows/nsis/installer.nsi
+--- a/comm-esr60/comm/mail/installer/windows/nsis/installer.nsi
++++ b/comm-esr60/comm/mail/installer/windows/nsis/installer.nsi
+@@ -28,6 +28,7 @@
+ !addplugindir ./
+ 
+ Var TmpVal
++Var StartMenuDir
+ Var InstallType
+ Var AddStartMenuSC
+ Var AddTaskbarSC
+@@ -41,13 +42,13 @@
+ ; By defining NO_STARTMENU_DIR an installer that doesn't provide an option for
+ ; an application's Start Menu PROGRAMS directory and doesn't define the
+ ; StartMenuDir variable can use the common InstallOnInitCommon macro.
+-!define NO_STARTMENU_DIR
++; !define NO_STARTMENU_DIR
+ 
+ ; Attempt to elevate Standard Users in addition to users that
+ ; are a member of the Administrators group.
+ !define NONADMIN_ELEVATE
+ 
+-!define AbortSurveyURL "https://live.thunderbird.net/survey/cancel/?page="
++; !define AbortSurveyURL "https://live.thunderbird.net/survey/cancel/?page="
+ 
+ ; Other included files may depend upon these includes!
+ ; The following includes are provided by NSIS.
+@@ -247,7 +248,8 @@
+   ${EndIf}
+ 
+   ; setup the application model id registration value
+-  ${InitHashAppModelId} "$INSTDIR" "Software\Mozilla\${AppName}\TaskBarIDs"
++  ; ${InitHashAppModelId} "$INSTDIR" "Software\Mozilla\${AppName}\TaskBarIDs"
++  ${InitHashAppModelId} "$INSTDIR" "Software\PAMELA\${AppName}\TaskBarIDs"
+ 
+   ; Remove the updates directory
+   ${CleanUpdateDirectories} "Thunderbird" "Thunderbird\updates"
+@@ -364,19 +366,23 @@
+ 
+   ${LogHeader} "Adding Registry Entries"
+   SetShellVarContext current  ; Set SHCTX to HKCU
+-  ${RegCleanMain} "Software\Mozilla"
++  ; ${RegCleanMain} "Software\Mozilla"
++  ${RegCleanMain} "Software\PAMELA"
+   ${RegCleanUninstall}
+   ${UpdateProtocolHandlers}
+ 
+   ClearErrors
+-  WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
++  ; WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
++  WriteRegStr HKLM "Software\PAMELA" "${BrandShortName}InstallerTest" "Write Test"
+   ${If} ${Errors}
+     StrCpy $TmpVal "HKCU" ; used primarily for logging
+   ${Else}
+     SetShellVarContext all  ; Set SHCTX to HKLM
+-    DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
++    ; DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
++    DeleteRegValue HKLM "Software\PAMELA" "${BrandShortName}InstallerTest"
+     StrCpy $TmpVal "HKLM" ; used primarily for logging
+-    ${RegCleanMain} "Software\Mozilla"
++    ; ${RegCleanMain} "Software\Mozilla"
++    ${RegCleanMain} "Software\PAMELA"
+     ${RegCleanUninstall}
+     ${UpdateProtocolHandlers}
+   ${EndIf}
+@@ -474,7 +480,10 @@
+   ; Always add the application's shortcuts to the shortcuts log ini file. The
+   ; DeleteShortcuts macro will do the right thing on uninstall if the
+   ; shortcuts don't exist.
++  ${LogSMProgramsDirRelPath} "${BrandFullName}"
+   ${LogStartMenuShortcut} "${BrandFullName}.lnk"
++  ${LogStartMenuShortcut} "${BrandFullName}\${BrandFullName} (Choix du profil).lnk"
++  ${LogStartMenuShortcut} "${BrandFullName}\${BrandFullName} (Mode sans ${U+00E9}chec).lnk"
+   ${LogQuickLaunchShortcut} "${BrandFullName}.lnk"
+   ${LogDesktopShortcut} "${BrandFullName}.lnk"
+ 
+@@ -533,10 +542,41 @@
+     ${ElseIf} $TmpVal == "HKCU"
+       SetShellVarContext current
+     ${EndIf}
++    ; menu choix de profil
++    CreateShortCut "$SMPROGRAMS\${BrandFullName}\${BrandFullName} (Choix du profil).lnk" "$INSTDIR\${FileMainEXE}" \
++                   "-p" "$INSTDIR\${FileMainEXE}" 0
++    ${If} ${FileExists} "$SMPROGRAMS\${BrandFullName}\${BrandFullName} (Choix du profil).lnk"
++      ShellLink::SetShortCutWorkingDirectory "$SMPROGRAMS\${BrandFullName}\${BrandFullName} (Choix du profil).lnk" \
++                                           "$INSTDIR"
++    ${If} ${AtLeastWin7}
++      ${AndIf} "$AppUserModelID" != ""
++        ApplicationID::Set "$SMPROGRAMS\${BrandFullName}\${BrandFullName} (Choix du profil).lnk" "$AppUserModelID" "true"
++      ${EndIf}
++      ${LogMsg} "Added Shortcut: $SMPROGRAMS\${BrandFullName}\${BrandFullName} (Choix du profil).lnk"
++    ${Else}
++      ${LogMsg} "** ERROR Adding Shortcut: $SMPROGRAMS\${BrandFullName}\${BrandFullName} (Choix du profil).lnk"
++    ${EndIf}
++    
++    ; menu sans echec
++    CreateShortCut "$SMPROGRAMS\${BrandFullName}\${BrandFullName} (Mode sans ${U+00E9}chec).lnk" "$INSTDIR\${FileMainEXE}" \
++                   "-safe-mode" "$INSTDIR\${FileMainEXE}" 0
++    ${If} ${FileExists} "$SMPROGRAMS\${BrandFullName}\${BrandFullName} (Mode sans ${U+00E9}chec).lnk"
++      ShellLink::SetShortCutWorkingDirectory "$SMPROGRAMS\${BrandFullName}\${BrandFullName} (Mode sans ${U+00E9}chec).lnk" \
++                                           "$INSTDIR"
++    ${If} ${AtLeastWin7}
++      ${AndIf} "$AppUserModelID" != ""
++        ApplicationID::Set "$SMPROGRAMS\${BrandFullName}\${BrandFullName} (Mode sans ${U+00E9}chec).lnk" "$AppUserModelID" "true"
++      ${EndIf}
++      ${LogMsg} "Added Shortcut: $SMPROGRAMS\${BrandFullName}\${BrandFullName} (Mode sans ${U+00E9}chec).lnk"
++    ${Else}
++      ${LogMsg} "** ERROR Adding Shortcut: $SMPROGRAMS\${BrandFullName}\${BrandFullName} (Mode sans ${U+00E9}chec).lnk"
++    ${EndIf}
+   ${EndIf}
+ 
+   ${If} $AddDesktopSC == 1
+-    CreateShortCut "$DESKTOP\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}"
++    ;CreateShortCut "$DESKTOP\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}"
++     CreateShortCut "$DESKTOP\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}" \
++                    "" "$INSTDIR\${FileMainEXE}" 0
+     ${If} ${FileExists} "$DESKTOP\${BrandFullName}.lnk"
+       ShellLink::SetShortCutWorkingDirectory "$DESKTOP\${BrandFullName}.lnk" \
+                                              "$INSTDIR"
+@@ -721,7 +761,9 @@
+ # Helper Functions
+ 
+ Function AddQuickLaunchShortcut
+-  CreateShortCut "$QUICKLAUNCH\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}"
++  ;CreateShortCut "$QUICKLAUNCH\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}"
++  CreateShortCut "$QUICKLAUNCH\${BrandFullName}.lnk" "$INSTDIR\${FileMainEXE}" \
++                  "" "$INSTDIR\${FileMainEXE}" 0
+   ${If} ${FileExists} "$QUICKLAUNCH\${BrandFullName}.lnk"
+     ShellLink::SetShortCutWorkingDirectory "$QUICKLAUNCH\${BrandFullName}.lnk" \
+                                            "$INSTDIR"
+@@ -836,8 +878,9 @@
+     CopyFiles /SILENT "$EXEDIR\core\distribution\modern-header.bmp" "$PLUGINSDIR\modern-header.bmp"
+     ${ChangeMUIHeaderImage} "$PLUGINSDIR\modern-header.bmp"
+   ${EndIf}
+-  !insertmacro MUI_HEADER_TEXT "$(OPTIONS_PAGE_TITLE)" "$(OPTIONS_PAGE_SUBTITLE)"
+-  !insertmacro MUI_INSTALLOPTIONS_DISPLAY "options.ini"
++  ; !insertmacro MUI_HEADER_TEXT "$(OPTIONS_PAGE_TITLE)" "$(OPTIONS_PAGE_SUBTITLE)"
++  ; !insertmacro MUI_INSTALLOPTIONS_DISPLAY "options.ini"
++  StrCpy $InstallType ${INSTALLTYPE_BASIC}
+ FunctionEnd
+ 
+ Function leaveOptions
+@@ -916,13 +959,16 @@
+ 
+   ; Only show the maintenance service page if we have write access to HKLM
+   ClearErrors
+-  WriteRegStr HKLM "Software\Mozilla" \
++  ; WriteRegStr HKLM "Software\Mozilla"
++
++  WriteRegStr HKLM "Software\PAMELA" \
+               "${BrandShortName}InstallerTest" "Write Test"
+   ${If} ${Errors}
+     ClearErrors
+     Abort
+   ${Else}
+-    DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
++    ; DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
++    DeleteRegValue HKLM "Software\PAMELA" "${BrandShortName}InstallerTest"
+   ${EndIf}
+ 
+   StrCpy $PageName "Components"
+@@ -1090,13 +1136,15 @@
+   !insertmacro InitInstallOptionsFile "summary.ini"
+ 
+   ClearErrors
+-  WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
++  ; WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
++  WriteRegStr HKLM "Software\PAMELA" "${BrandShortName}InstallerTest" "Write Test"
+   ${If} ${Errors}
+     ; Setup the options.ini file for the Custom Options Page without the option
+     ; to set as default since the installer is unable to write to HKLM.
+     WriteINIStr "$PLUGINSDIR\options.ini" "Settings" NumFields "5"
+   ${Else}
+-    DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
++    ; DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
++    DeleteRegValue HKLM "Software\PAMELA" "${BrandShortName}InstallerTest"
+     ; Setup the options.ini file for the Custom Options Page with the option
+     ; to set as default
+     WriteINIStr "$PLUGINSDIR\options.ini" "Settings" NumFields "6"
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/shared.nsh b/comm-esr60/comm/mail/installer/windows/nsis/shared.nsh
+--- a/comm-esr60/comm/mail/installer/windows/nsis/shared.nsh
++++ b/comm-esr60/comm/mail/installer/windows/nsis/shared.nsh
+@@ -1,4 +1,4 @@
+-# This Source Code Form is subject to the terms of the Mozilla Public
++﻿# This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+@@ -9,12 +9,14 @@
+   ; install location in the Software\Mozilla key and uninstall registry entries
+   ; that point to our install location for both HKCU and HKLM.
+   SetShellVarContext current  ; Set SHCTX to the current user (e.g. HKCU)
+-  ${RegCleanMain} "Software\Mozilla"
++  ; ${RegCleanMain} "Software\Mozilla"
++  ${RegCleanMain} "Software\PAMELA"
+   ${RegCleanUninstall}
+   ${UpdateProtocolHandlers}
+ 
+   ; setup the application model id registration value
+-  ${InitHashAppModelId} "$INSTDIR" "Software\Mozilla\${AppName}\TaskBarIDs"
++  ; ${InitHashAppModelId} "$INSTDIR" "Software\Mozilla\${AppName}\TaskBarIDs"
++  ${InitHashAppModelId} "$INSTDIR" "Software\PAMELA\${AppName}\TaskBarIDs"
+ 
+   ; Win7 taskbar and start menu link maintenance
+   Call FixShortcutAppModelIDs
+@@ -23,14 +25,17 @@
+   ${UpgradeMapiDLLs}
+ 
+   ClearErrors
+-  WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
++  ; WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
++  WriteRegStr HKLM "Software\PAMELA" "${BrandShortName}InstallerTest" "Write Test"
+   ${If} ${Errors}
+     StrCpy $TmpVal "HKCU" ; used primarily for logging
+   ${Else}
+     SetShellVarContext all    ; Set SHCTX to all users (e.g. HKLM)
+-    DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
++    ; DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
++    DeleteRegValue HKLM "Software\PAMELA" "${BrandShortName}InstallerTest"
+     StrCpy $TmpVal "HKLM" ; used primarily for logging
+-    ${RegCleanMain} "Software\Mozilla"
++    ; ${RegCleanMain} "Software\Mozilla"
++    ${RegCleanMain} "Software\PAMELA"
+     ${RegCleanUninstall}
+     ${UpdateProtocolHandlers}
+ 
+@@ -112,7 +117,8 @@
+     ${If} ${RunningX64}
+       SetRegView 64
+     ${EndIf}
+-    ReadRegDWORD $5 HKLM "Software\Mozilla\MaintenanceService" "Attempted"
++    ; ReadRegDWORD $5 HKLM "Software\Mozilla\MaintenanceService" "Attempted"
++    ReadRegDWORD $5 HKLM "Software\PAMELA\MaintenanceService" "Attempted"
+     ClearErrors
+     ${If} ${RunningX64}
+       SetRegView lastused
+@@ -573,27 +579,34 @@
+ ; Add Software\Mozilla\ registry entries (uses SHCTX).
+ !macro SetAppKeys
+   ${GetLongPath} "$INSTDIR" $8
+-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})\Main"
++  ; StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})\Main"
++  StrCpy $0 "Software\PAMELA\${BrandFullNameInternal}\${AppVersion} (${AB_CD})\Main"
+   ${WriteRegStr2} $TmpVal "$0" "Install Directory" "$8" 0
+   ${WriteRegStr2} $TmpVal "$0" "PathToExe" "$8\${FileMainEXE}" 0
+ 
+-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})\Uninstall"
++  ; StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})\Uninstall"
++  StrCpy $0 "Software\PAMELA\${BrandFullNameInternal}\${AppVersion} (${AB_CD})\Uninstall"
+   ${WriteRegStr2} $TmpVal "$0" "Description" "${BrandFullNameInternal} ${AppVersion} (${ARCH} ${AB_CD})" 0
+ 
+-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})"
++  ; StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})"
++  StrCpy $0 "Software\PAMELA\${BrandFullNameInternal}\${AppVersion} (${AB_CD})"
+   ${WriteRegStr2} $TmpVal  "$0" "" "${AppVersion} (${AB_CD})" 0
+ 
+-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}\bin"
++  ; StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}\bin"
++  StrCpy $0 "Software\PAMELA\${BrandFullNameInternal} ${AppVersion}\bin"
+   ${WriteRegStr2} $TmpVal "$0" "PathToExe" "$8\${FileMainEXE}" 0
+ 
+-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}\extensions"
++  ; StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}\extensions"
++  StrCpy $0 "Software\PAMELA\${BrandFullNameInternal} ${AppVersion}\extensions"
+   ${WriteRegStr2} $TmpVal "$0" "Components" "$8\components" 0
+   ${WriteRegStr2} $TmpVal "$0" "Plugins" "$8\plugins" 0
+ 
+-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}"
++  ; StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}"
++  StrCpy $0 "Software\PAMELA\${BrandFullNameInternal} ${AppVersion}"
+   ${WriteRegStr2} $TmpVal "$0" "GeckoVer" "${GREVersion}" 0
+ 
+-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}"
++  ; StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}"
++  StrCpy $0 "Software\PAMELA\${BrandFullNameInternal}"
+   ${WriteRegStr2} $TmpVal "$0" "" "${AppVersion}" 0
+   ${WriteRegStr2} $TmpVal "$0" "CurrentVersion" "${AppVersion} (${AB_CD})" 0
+   ${WriteRegStr2} $TmpVal "$0" "GeckoVersion" "${GREVersion}" 0
+@@ -629,14 +642,14 @@
+   ${If} $2 == ""
+     ${GetLongPath} "$INSTDIR" $8
+ 
+-
+     ; Write the uninstall registry keys
+     ${WriteRegStr2} $1 "$0" "Comments" "${BrandFullNameInternal} ${AppVersion} (${ARCH} ${AB_CD})" 0
+     ${WriteRegStr2} $1 "$0" "DisplayIcon" "$8\${FileMainEXE},0" 0
+     ${WriteRegStr2} $1 "$0" "DisplayName" "${BrandFullNameInternal} ${AppVersion} (${ARCH} ${AB_CD})" 0
+     ${WriteRegStr2} $1 "$0" "DisplayVersion" "${AppVersion}" 0
+     ${WriteRegStr2} $1 "$0" "InstallLocation" "$8" 0
+-    ${WriteRegStr2} $1 "$0" "Publisher" "Mozilla" 0
++    ; ${WriteRegStr2} $1 "$0" "Publisher" "Mozilla" 0
++    ${WriteRegStr2} $1 "$0" "Publisher" "PNE Annuaire et Messagerie" 0
+     ${WriteRegStr2} $1 "$0" "UninstallString" "$8\uninstall\helper.exe" 0
+     ${WriteRegStr2} $1 "$0" "URLInfoAbout" "${URLInfoAbout}" 0
+     ${WriteRegStr2} $1 "$0" "URLUpdateInfo" "${URLUpdateInfo}" 0
+@@ -1050,6 +1063,7 @@
+ !macroend
+ !define RemoveStartMenuDir "!insertmacro RemoveStartMenuDir"
+ 
++
+ ; Creates the shortcuts log ini file with the appropriate entries if it doesn't
+ ; already exist.
+ !macro CreateShortcutsLog
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi b/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
+--- a/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
++++ b/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
+@@ -135,6 +135,8 @@
+ !define MUI_HEADERIMAGE
+ !define MUI_HEADERIMAGE_RIGHT
+ !define MUI_UNWELCOMEFINISHPAGE_BITMAP wizWatermark.bmp
++; cm2v5
++!define NO_UNINSTALL_SURVEY
+ 
+ ; Use a right to left header image when the language is right to left
+ !ifdef ${AB_CD}_rtl
+@@ -251,12 +253,29 @@
+   ${EndIf}
+ 
+   ; setup the application model id registration value
+-  ${un.InitHashAppModelId} "$INSTDIR" "Software\Mozilla\${AppName}\TaskBarIDs"
++  ; ${un.InitHashAppModelId} "$INSTDIR" "Software\Mozilla\${AppName}\TaskBarIDs"
++  ${un.InitHashAppModelId} "$INSTDIR" "Software\PAMELA\${AppName}\TaskBarIDs"
+ 
+   SetShellVarContext current  ; Set SHCTX to HKCU
+-  ${un.RegCleanMain} "Software\Mozilla"
++  ; ${un.RegCleanMain} "Software\Mozilla"
++  ${un.RegCleanMain} "Software\PAMELA"
+   ${un.RegCleanUninstall}
+   ${un.DeleteShortcuts}
++  ; suppression groupe de menus 'Courrielleur Mélanie2'
++  StrCpy $0 "$INSTDIR\uninstall\${SHORTCUTS_LOG}"
++  ${If} ${FileExists} "$0"
++    ${un.GetLongPath} "$SMPROGRAMS" $1
++    ClearErrors
++    ReadINIStr $2 "$0" "SMPROGRAMS" "RelativePathToDir"
++    ${Unless} ${Errors}
++      ${un.GetLongPath} "$1\$2" $2
++      ${If} "$2" != ""
++        ${If} ${FileExists} "$2"
++          RmDir "$2"
++        ${EndIf}
++      ${EndIf}
++    ${EndUnless}
++  ${EndIf}  
+ 
+   ; Unregister resources associated with Win7 taskbar jump lists.
+   ${If} ${AtLeastWin7}
+@@ -268,18 +287,23 @@
+   ${un.CleanUpdateDirectories} "Thunderbird" "Thunderbird\updates"
+ 
+   ; Remove any app model id's stored in the registry for this install path
+-  DeleteRegValue HKCU "Software\Mozilla\${AppName}\TaskBarIDs" "$INSTDIR"
+-  DeleteRegValue HKLM "Software\Mozilla\${AppName}\TaskBarIDs" "$INSTDIR"
++  ; DeleteRegValue HKCU "Software\Mozilla\${AppName}\TaskBarIDs" "$INSTDIR"
++  DeleteRegValue HKCU "Software\PAMELA\${AppName}\TaskBarIDs" "$INSTDIR"
++  ; DeleteRegValue HKLM "Software\Mozilla\${AppName}\TaskBarIDs" "$INSTDIR"
++  DeleteRegValue HKLM "Software\PAMELA\${AppName}\TaskBarIDs" "$INSTDIR"
+ 
+   ClearErrors
+-  WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
++  ; WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
++  WriteRegStr HKLM "Software\PAMELA" "${BrandShortName}InstallerTest" "Write Test"
+   ${If} ${Errors}
+     StrCpy $TmpVal "HKCU" ; used primarily for logging
+   ${Else}
+     SetShellVarContext all  ; Set SHCTX to HKLM
++    ; DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
+     DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
+     StrCpy $TmpVal "HKLM" ; used primarily for logging
+-    ${un.RegCleanMain} "Software\Mozilla"
++    ; ${un.RegCleanMain} "Software\Mozilla"
++    ${un.RegCleanMain} "Software\PAMELA"
+     ${un.RegCleanUninstall}
+     ${un.DeleteShortcuts}
+   ${EndIf}
+@@ -306,10 +330,12 @@
+   ${EndIf}
+ 
+   SetShellVarContext all  ; Set SHCTX to HKLM
+-  ${un.GetSecondInstallPath} "Software\Mozilla" $R9
++  ; ${un.GetSecondInstallPath} "Software\Mozilla" $R9
++  ${un.GetSecondInstallPath} "Software\PAMELA" $R9
+   ${If} $R9 == "false"
+     SetShellVarContext current  ; Set SHCTX to HKCU
+-    ${un.GetSecondInstallPath} "Software\Mozilla" $R9
++    ; ${un.GetSecondInstallPath} "Software\Mozilla" $R9
++    ${un.GetSecondInstallPath} "Software\PAMELA" $R9
+   ${EndIf}
+ 
+   StrCpy $0 "Software\Clients\Mail\${ClientsRegName}\shell\open\command"
+diff --git a/comm-esr60/comm/mail/locales/Makefile.in b/comm-esr60/comm/mail/locales/Makefile.in
+--- a/comm-esr60/comm/mail/locales/Makefile.in
++++ b/comm-esr60/comm/mail/locales/Makefile.in
+@@ -45,7 +45,7 @@
+ MOZ_PKG_MAC_EXTRA=--symlink '/Applications:/ '
+ endif
+ 
+-MOZ_SFX_PACKAGE=$(commtopsrcdir)/other-licenses/7zstub/thunderbird/7zSD.sfx
++MOZ_SFX_PACKAGE=$(commtopsrcdir)/courrielleurm2/7zstub/7zSD.sfx
+ MOZ_INSTALLER_PATH=$(commtopsrcdir)/mail/installer/windows
+ 
+ NON_OMNIJAR_FILES = defaults/messenger/mailViews.dat
+diff --git a/comm-esr60/toolkit/mozapps/installer/package-name.mk b/comm-esr60/toolkit/mozapps/installer/package-name.mk
+--- a/comm-esr60/toolkit/mozapps/installer/package-name.mk
++++ b/comm-esr60/toolkit/mozapps/installer/package-name.mk
+@@ -11,7 +11,7 @@
+ PACKAGE_NAME_MK_INCLUDED := 1
+ 
+ ifndef MOZ_PKG_VERSION
+-MOZ_PKG_VERSION = $(MOZ_APP_VERSION)
++MOZ_PKG_VERSION = 8.0T1
+ endif
+ 
+ ifndef MOZ_PKG_PLATFORM
+@@ -41,16 +41,16 @@
+ MOZ_PKG_PLATFORM := $(MOZ_PKG_PLATFORM)-$(MOZ_PKG_SPECIAL)
+ endif
+ 
+-MOZ_PKG_DIR ?= $(MOZ_APP_NAME)
++MOZ_PKG_DIR ?= CourrielleurMelanie2
+ 
+ ifndef MOZ_PKG_APPNAME
+-MOZ_PKG_APPNAME = $(MOZ_APP_NAME)
++MOZ_PKG_APPNAME = CourrielleurMelanie2
+ endif
+ 
+ ifdef MOZ_SIMPLE_PACKAGE_NAME
+ PKG_BASENAME := $(MOZ_SIMPLE_PACKAGE_NAME)
+ else
+-PKG_BASENAME = $(MOZ_PKG_APPNAME)-$(MOZ_PKG_VERSION).$(AB_CD).$(MOZ_PKG_PLATFORM)
++PKG_BASENAME = $(MOZ_PKG_APPNAME)_$(MOZ_PKG_VERSION).$(MOZ_PKG_PLATFORM)
+ endif
+ PKG_PATH =
+ SDK_PATH =
+diff --git a/comm-esr60/toolkit/mozapps/installer/windows/nsis/common.nsh b/comm-esr60/toolkit/mozapps/installer/windows/nsis/common.nsh
+--- a/comm-esr60/toolkit/mozapps/installer/windows/nsis/common.nsh
++++ b/comm-esr60/toolkit/mozapps/installer/windows/nsis/common.nsh
+@@ -5434,12 +5434,14 @@
+ 
+ !ifndef NO_INSTDIR_FROM_REG
+       SetShellVarContext all      ; Set SHCTX to HKLM
+-      ${GetSingleInstallPath} "Software\Mozilla\${BrandFullNameInternal}" $R9
++      ; ${GetSingleInstallPath} "Software\Mozilla\${BrandFullNameInternal}" $R9
++      ${GetSingleInstallPath} "Software\PAMELA\${BrandFullNameInternal}" $R9
+ 
+       StrCmp "$R9" "false" +1 finish_get_install_dir
+ 
+       SetShellVarContext current  ; Set SHCTX to HKCU
+-      ${GetSingleInstallPath} "Software\Mozilla\${BrandFullNameInternal}" $R9
++      ; ${GetSingleInstallPath} "Software\Mozilla\${BrandFullNameInternal}" $R9
++      ${GetSingleInstallPath} "Software\PAMELA\${BrandFullNameInternal}" $R9
+ 
+       ${If} ${RunningX64}
+         ; In HKCU there is no WOW64 redirection, which means we may have gotten
+diff --git a/fr-esr60/fr/mail/installer/custom.properties b/fr-esr60/fr/mail/installer/custom.properties
+--- a/fr-esr60/fr/mail/installer/custom.properties
++++ b/fr-esr60/fr/mail/installer/custom.properties
+@@ -18,61 +18,61 @@
+ # You can use \n to create a newline in the string but only when the string
+ # from en-US contains a \n.
+ 
+-REG_APP_DESC=$BrandShortName est une application de messagerie complète. $BrandShortName gère les protocoles de courrier IMAP et POP, ainsi que le formatage HTML du courrier. Une détection des courriers indésirables intégrée, la lecture de flux RSS, une recherche rapide et puissante, une correction orthographique lors de la saisie, une boîte de courrier entrant globale et le filtrage avancé des messages, font partie de l’ensemble de fonctionnalités modernes de $BrandShortName.
+-CONTEXT_OPTIONS=&Options de $BrandShortName
+-CONTEXT_SAFE_MODE=&Mode sans échec de $BrandShortName
++REG_APP_DESC=Le $BrandShortName est une application de messagerie complète. Le $BrandShortName gère les protocoles de courrier IMAP et POP, ainsi que le formatage HTML du courrier. Une détection des courriers indésirables intégrée, la lecture de flux RSS, une recherche rapide et puissante, une correction orthographique lors de la saisie, une boîte de courrier entrant globale et le filtrage avancé des messages, font partie de l’ensemble de fonctionnalités modernes du $BrandShortName.
++CONTEXT_OPTIONS=&Options du $BrandShortName
++CONTEXT_SAFE_MODE=&Mode sans échec du $BrandShortName
+ OPTIONS_PAGE_TITLE=Type d’installation
+ OPTIONS_PAGE_SUBTITLE=Choisir les options d’installation
+-OPTIONS_MAKE_DEFAULT=&Utiliser $BrandShortName comme application de courrier électronique par défaut
++OPTIONS_MAKE_DEFAULT=&Utiliser le $BrandShortName comme application de courrier électronique par défaut
+ SHORTCUTS_PAGE_TITLE=Définition des raccourcis
+ SHORTCUTS_PAGE_SUBTITLE=Créer les icônes de programme
+ COMPONENTS_PAGE_TITLE=Installation de composants optionnels
+ COMPONENTS_PAGE_SUBTITLE=Composants optionnels recommandés
+-OPTIONAL_COMPONENTS_DESC=Le service de maintenance permettra de mettre à jour $BrandShortName silencieusement en arrière-plan.
++OPTIONAL_COMPONENTS_DESC=Le service de maintenance permettra de mettre à jour le $BrandShortName silencieusement en arrière-plan.
+ MAINTENANCE_SERVICE_CHECKBOX_DESC=Installer le service de &maintenance
+ SUMMARY_PAGE_TITLE=Résumé
+-SUMMARY_PAGE_SUBTITLE=Prêt à démarrer l’installation de $BrandShortName
+-SUMMARY_INSTALLED_TO=$BrandShortName sera installé à l’emplacement suivant :
++SUMMARY_PAGE_SUBTITLE=Prêt à démarrer l’installation du $BrandShortName
++SUMMARY_INSTALLED_TO=Le $BrandShortName sera installé à l’emplacement suivant :
+ SUMMARY_REBOOT_REQUIRED_INSTALL=Un redémarrage de l’ordinateur sera peut-être nécessaire pour terminer l’installation.
+ SUMMARY_REBOOT_REQUIRED_UNINSTALL=Un redémarrage de l’ordinateur sera peut-être nécessaire pour terminer la désinstallation.
+-SUMMARY_MAKE_DEFAULT=$BrandShortName sera défini comme application de courrier électronique par défaut.
++SUMMARY_MAKE_DEFAULT=Le $BrandShortName sera défini comme application de courrier électronique par défaut.
+ SUMMARY_CLICK=Cliquez sur « Installer » pour continuer.
+-SURVEY_TEXT=&Dites-nous ce que vous avez pensé de $BrandShortName
+-LAUNCH_TEXT=&Lancer $BrandFullName
+-CREATE_ICONS_DESC=Créer des icônes pour $BrandShortName :
++SURVEY_TEXT=&Dites-nous ce que vous avez pensé du $BrandShortName
++LAUNCH_TEXT=&Lancer le $BrandFullName
++CREATE_ICONS_DESC=Créer des icônes pour le $BrandShortName :
+ ICONS_DESKTOP=Sur le « &Bureau »
+ ICONS_STARTMENU=Dans mon dossier « &Programmes » du menu « Démarrer »
+ ICONS_QUICKLAUNCH=Dans la barre « &lancement rapide »
+-WARN_MANUALLY_CLOSE_APP_INSTALL=$BrandShortName doit être fermé pour procéder à l’installation.\n\nVeuillez fermer $BrandShortName pour continuer.
+-WARN_MANUALLY_CLOSE_APP_UNINSTALL=$BrandShortName doit être fermé pour procéder à la désinstallation.\n\nVeuillez fermer $BrandShortName pour continuer.
+-WARN_MANUALLY_CLOSE_APP_LAUNCH=$BrandShortName est déjà en cours d’exécution.\n\nVeuillez fermer $BrandShortName avant de lancer la version que vous venez d’installer.
++WARN_MANUALLY_CLOSE_APP_INSTALL=Le $BrandShortName doit être fermé pour procéder à l’installation.\n\nVeuillez fermer le $BrandShortName pour continuer.
++WARN_MANUALLY_CLOSE_APP_UNINSTALL=Le $BrandShortName doit être fermé pour procéder à la désinstallation.\n\nVeuillez fermer le $BrandShortName pour continuer.
++WARN_MANUALLY_CLOSE_APP_LAUNCH=Le $BrandShortName est déjà en cours d’exécution.\n\nVeuillez fermer $BrandShortName avant de lancer la version que vous venez d’installer.
+ WARN_WRITE_ACCESS=Vous n’avez pas de permission d’écriture sur le répertoire d’installation.\n\nCliquez sur « OK » pour sélectionner un répertoire différent.
+ WARN_DISK_SPACE=Il n’y a pas suffisamment d’espace disque disponible pour faire l’installation à cet emplacement.\n\nCliquez sur « OK » pour sélectionner un emplacement différent.
+-WARN_MIN_SUPPORTED_OSVER_MSG=Nous sommes désolés, mais $BrandShortName ne peut pas être installé. Cette version de $BrandShortName nécessite ${MinSupportedVer} ou plus récent. Veuillez cliquer sur le bouton OK pour davantage d’informations.
+-WARN_MIN_SUPPORTED_CPU_MSG=Nous sommes désolés, mais $BrandShortName ne peut pas être installé. Cette version de $BrandShortName nécessite un processeur prenant en charge ${MinSupportedCPU}. Veuillez cliquer sur le bouton OK pour davantage d’informations.
+-WARN_MIN_SUPPORTED_OSVER_CPU_MSG=Nous sommes désolés, mais $BrandShortName ne peut pas être installé. Cette version de $BrandShortName nécessite ${MinSupportedVer} ou plus récent et un processeur prenant en charge ${MinSupportedCPU}. Veuillez cliquer sur le bouton OK pour davantage d’informations.
+-WARN_RESTART_REQUIRED_UNINSTALL=Votre ordinateur doit redémarrer pour terminer une désinstallation précédente de $BrandShortName. Voulez-vous redémarrer maintenant ?
+-WARN_RESTART_REQUIRED_UPGRADE=Votre ordinateur doit être redémarré pour terminer une mise à jour précédente de $BrandShortName. Voulez-vous redémarrer maintenant ?
++WARN_MIN_SUPPORTED_OSVER_MSG=Nous sommes désolés, mais le $BrandShortName ne peut pas être installé. Cette version du $BrandShortName nécessite ${MinSupportedVer} ou plus récent. Veuillez cliquer sur le bouton OK pour davantage d’informations.
++WARN_MIN_SUPPORTED_CPU_MSG=Nous sommes désolés, maisle  $BrandShortName ne peut pas être installé. Cette version du $BrandShortName nécessite un processeur prenant en charge ${MinSupportedCPU}. Veuillez cliquer sur le bouton OK pour davantage d’informations.
++WARN_MIN_SUPPORTED_OSVER_CPU_MSG=Nous sommes désolés, mais le $BrandShortName ne peut pas être installé. Cette version du $BrandShortName nécessite ${MinSupportedVer} ou plus récent et un processeur prenant en charge ${MinSupportedCPU}. Veuillez cliquer sur le bouton OK pour davantage d’informations.
++WARN_RESTART_REQUIRED_UNINSTALL=Votre ordinateur doit redémarrer pour terminer une désinstallation précédente du $BrandShortName. Voulez-vous redémarrer maintenant ?
++WARN_RESTART_REQUIRED_UPGRADE=Votre ordinateur doit être redémarré pour terminer une mise à jour précédente du $BrandShortName. Voulez-vous redémarrer maintenant ?
+ ERROR_CREATE_DIRECTORY_PREFIX=Erreur lors de la création du répertoire :
+ ERROR_CREATE_DIRECTORY_SUFFIX=Cliquez sur « Annuler » pour arrêter l’installation ou\n« Recommencer » pour essayer à nouveau.
+ 
+-UN_CONFIRM_PAGE_TITLE=Désinstallation de $BrandFullName
+-UN_CONFIRM_PAGE_SUBTITLE=Suppression de $BrandFullName de votre ordinateur.
+-UN_CONFIRM_UNINSTALLED_FROM=$BrandShortName va être désinstallé de l’emplacement suivant :
++UN_CONFIRM_PAGE_TITLE=Désinstallation du $BrandFullName
++UN_CONFIRM_PAGE_SUBTITLE=Suppression du $BrandFullName de votre ordinateur.
++UN_CONFIRM_UNINSTALLED_FROM=Le $BrandShortName va être désinstallé de l’emplacement suivant :
+ UN_CONFIRM_CLICK=Cliquez sur « Désinstaller » pour continuer.
+ 
+ BANNER_CHECK_EXISTING=Vérification de l’installation existante…
+ 
+-STATUS_INSTALL_APP=Installation de $BrandShortName…
++STATUS_INSTALL_APP=Installation du $BrandShortName…
+ STATUS_INSTALL_LANG=Installation des fichiers de langue (${AB_CD})…
+-STATUS_UNINSTALL_MAIN=Désinstallation de $BrandShortName…
++STATUS_UNINSTALL_MAIN=Désinstallation du $BrandShortName…
+ STATUS_CLEANUP=Nettoyage en cours…
+ 
+ # _DESC strings support approximately 65 characters per line.
+ # One line
+ OPTIONS_SUMMARY=Choisir le type d’installation désiré et cliquer sur « Suivant ».
+ # One line
+-OPTION_STANDARD_DESC=$BrandShortName sera installé avec les options les plus courantes.
++OPTION_STANDARD_DESC=Le $BrandShortName sera installé avec les options les plus courantes.
+ OPTION_STANDARD_RADIO=&Standard
+ # Two lines
+ OPTION_CUSTOM_DESC=Choisir les options à installer. Recommandé pour les utilisateurs avertis.
+diff --git a/fr-esr60/fr/mail/installer/mui.properties b/fr-esr60/fr/mail/installer/mui.properties
+--- a/fr-esr60/fr/mail/installer/mui.properties
++++ b/fr-esr60/fr/mail/installer/mui.properties
+@@ -20,41 +20,41 @@
+ 
+ # You can use \n to create a newline in the string but only when the string
+ # from en-US contains a \n.
+-MUI_TEXT_WELCOME_INFO_TITLE=Bienvenue dans l’assistant d’installation de $BrandFullNameDA
+-MUI_TEXT_WELCOME_INFO_TEXT=Cet assistant vous guidera pendant l’installation de $BrandFullNameDA.\n\nIl est recommandé de fermer toutes les autres applications avant de commencer l’installation. Ceci rend possible la mise à jour des fichiers système concernés sans avoir à redémarrer l’ordinateur.\n\n$_CLICK
++MUI_TEXT_WELCOME_INFO_TITLE=Bienvenue dans l’assistant d’installation du $BrandFullNameDA version ${AppVersion}
++MUI_TEXT_WELCOME_INFO_TEXT=Cet assistant vous guidera pendant l’installation du $BrandFullNameDA.\n\nIl est recommandé de fermer toutes les autres applications avant de commencer l’installation. Ceci rend possible la mise à jour des fichiers système concernés sans avoir à redémarrer l’ordinateur.\n\n$_CLICK
+ MUI_TEXT_COMPONENTS_TITLE=Choisir les composants
+-MUI_TEXT_COMPONENTS_SUBTITLE=Choisissez les fonctionnalités de $BrandFullNameDA que vous voulez installer.
++MUI_TEXT_COMPONENTS_SUBTITLE=Choisissez les fonctionnalités du $BrandFullNameDA que vous voulez installer.
+ MUI_INNERTEXT_COMPONENTS_DESCRIPTION_TITLE=Description
+ MUI_INNERTEXT_COMPONENTS_DESCRIPTION_INFO=Placez le curseur de la souris au-dessus d’un composant pour voir sa description.
+ MUI_TEXT_DIRECTORY_TITLE=Choix de l’emplacement de l’installation
+ MUI_TEXT_DIRECTORY_SUBTITLE=Choisissez le dossier dans lequel installer $BrandFullNameDA.
+ MUI_TEXT_INSTALLING_TITLE=Installation en cours
+-MUI_TEXT_INSTALLING_SUBTITLE=Veuillez patienter pendant l’installation de $BrandFullNameDA.
++MUI_TEXT_INSTALLING_SUBTITLE=Veuillez patienter pendant l’installation du $BrandFullNameDA.
+ MUI_TEXT_FINISH_TITLE=Installation terminée
+ MUI_TEXT_FINISH_SUBTITLE=L’installation s’est terminée avec succès.
+ MUI_TEXT_ABORT_TITLE=Installation interrompue
+ MUI_TEXT_ABORT_SUBTITLE=L’installation a échoué.
+ MUI_BUTTONTEXT_FINISH=&Terminer
+-MUI_TEXT_FINISH_INFO_TITLE=Fin de l’assistant d’installation de $BrandFullNameDA
+-MUI_TEXT_FINISH_INFO_TEXT=$BrandFullNameDA a été installé sur votre ordinateur.\n\nCliquez sur « Terminer » pour fermer cet assistant.
+-MUI_TEXT_FINISH_INFO_REBOOT=Votre ordinateur doit être redémarré afin de terminer l’installation de $BrandFullNameDA. Voulez-vous redémarrer maintenant ?
++MUI_TEXT_FINISH_INFO_TITLE=Fin de l’assistant d’installation du $BrandFullNameDA
++MUI_TEXT_FINISH_INFO_TEXT=Le $BrandFullNameDA a été installé sur votre ordinateur.\n\nCliquez sur « Terminer » pour fermer cet assistant.
++MUI_TEXT_FINISH_INFO_REBOOT=Votre ordinateur doit être redémarré afin de terminer l’installation du $BrandFullNameDA. Voulez-vous redémarrer maintenant ?
+ MUI_TEXT_FINISH_REBOOTNOW=Redémarrer maintenant
+ MUI_TEXT_FINISH_REBOOTLATER=Redémarrer plus tard
+ MUI_TEXT_STARTMENU_TITLE=Choix du dossier du menu « Démarrer »
+-MUI_TEXT_STARTMENU_SUBTITLE=Choix du dossier dans le menu « Démarrer » pour les raccourcis de $BrandFullNameDA.
++MUI_TEXT_STARTMENU_SUBTITLE=Choix du dossier dans le menu « Démarrer » pour les raccourcis du $BrandFullNameDA.
+ MUI_INNERTEXT_STARTMENU_TOP=Sélectionnez le dossier du menu « Démarrer » dans lequel vous souhaitez créer les raccourcis de programmes. Vous pouvez également saisir un nom pour créer un nouveau dossier.
+-MUI_TEXT_ABORTWARNING=Voulez-vous vraiment quitter le programme d’installation de $BrandFullName ?
+-MUI_UNTEXT_WELCOME_INFO_TITLE=Bienvenue dans l’assistant de désinstallation de $BrandFullNameDA
+-MUI_UNTEXT_WELCOME_INFO_TEXT=Cet assistant vous guidera pendant la désinstallation de $BrandFullNameDA.\n\nAvant de commencer la désinstallation, assurez-vous que $BrandFullNameDA n’est pas en cours d’exécution.\n\n$_CLICK
+-MUI_UNTEXT_CONFIRM_TITLE=Désinstallation de $BrandFullNameDA
+-MUI_UNTEXT_CONFIRM_SUBTITLE=Suppression de $BrandFullNameDA de votre ordinateur.
++MUI_TEXT_ABORTWARNING=Voulez-vous vraiment quitter le programme d’installation du $BrandFullName ?
++MUI_UNTEXT_WELCOME_INFO_TITLE=Bienvenue dans l’assistant de désinstallation du $BrandFullNameDA
++MUI_UNTEXT_WELCOME_INFO_TEXT=Cet assistant vous guidera pendant la désinstallation du $BrandFullNameDA.\n\nAvant de commencer la désinstallation, assurez-vous que le $BrandFullNameDA n’est pas en cours d’exécution.\n\n$_CLICK
++MUI_UNTEXT_CONFIRM_TITLE=Désinstallation du $BrandFullNameDA
++MUI_UNTEXT_CONFIRM_SUBTITLE=Suppression du $BrandFullNameDA de votre ordinateur.
+ MUI_UNTEXT_UNINSTALLING_TITLE=Désinstallation en cours
+-MUI_UNTEXT_UNINSTALLING_SUBTITLE=Veuillez patienter pendant la désinstallation de $BrandFullNameDA.
++MUI_UNTEXT_UNINSTALLING_SUBTITLE=Veuillez patienter pendant la désinstallation du $BrandFullNameDA.
+ MUI_UNTEXT_FINISH_TITLE=Désinstallation terminée
+ MUI_UNTEXT_FINISH_SUBTITLE=La désinstallation s’est terminée avec succès.
+ MUI_UNTEXT_ABORT_TITLE=Désinstallation interrompue
+ MUI_UNTEXT_ABORT_SUBTITLE=La désinstallation a échoué.
+-MUI_UNTEXT_FINISH_INFO_TITLE=Fin de l’assistant de désinstallation de $BrandFullNameDA
+-MUI_UNTEXT_FINISH_INFO_TEXT=$BrandFullNameDA a été désinstallé de votre ordinateur.\n\nCliquez sur « Terminer » pour fermer cet assistant.
+-MUI_UNTEXT_FINISH_INFO_REBOOT=Votre ordinateur doit être redémarré afin de terminer la désinstallation de $BrandFullNameDA. Voulez-vous redémarrer maintenant ?
+-MUI_UNTEXT_ABORTWARNING=Voulez-vous vraiment quitter le programme de désinstallation de $BrandFullName ?
++MUI_UNTEXT_FINISH_INFO_TITLE=Fin de l’assistant de désinstallation du $BrandFullNameDA
++MUI_UNTEXT_FINISH_INFO_TEXT=Le $BrandFullNameDA a été désinstallé de votre ordinateur.\n\nCliquez sur « Terminer » pour fermer cet assistant.
++MUI_UNTEXT_FINISH_INFO_REBOOT=Votre ordinateur doit être redémarré afin de terminer la désinstallation du $BrandFullNameDA. Voulez-vous redémarrer maintenant ?
++MUI_UNTEXT_ABORTWARNING=Voulez-vous vraiment quitter le programme de désinstallation du $BrandFullName ?
+diff --git a/fr-esr60/fr/mail/installer/override.properties b/fr-esr60/fr/mail/installer/override.properties
+--- a/fr-esr60/fr/mail/installer/override.properties
++++ b/fr-esr60/fr/mail/installer/override.properties
+@@ -23,8 +23,8 @@
+ # and end of a string enclose the strin with an additional double quote
+ # (e.g. ""This will include quotes"").
+ 
+-SetupCaption=Installation de $BrandFullName
+-UninstallCaption=Désinstallation de $BrandFullName
++SetupCaption=Installation du $BrandFullName
++UninstallCaption=Désinstallation du $BrandFullName
+ BackBtn=< &Précédent
+ NextBtn=&Suivant >
+ AcceptBtn=J’&accepte les termes de l’accord de licence
+@@ -39,15 +39,15 @@
+ ClickInstall=Cliquez sur « Installer » pour commencer l’installation.
+ ClickUninstall=Cliquez sur « Désinstaller » pour commencer la désinstallation.
+ Completed=Terminée
+-LicenseTextRB=Veuillez prendre connaissance de l’accord de licence avant d’installer $BrandFullNameDA. Si vous acceptez tous les termes de cet accord, sélectionnez la première option ci-dessous. $_CLICK
++LicenseTextRB=Veuillez prendre connaissance de l’accord de licence avant d’installer le $BrandFullNameDA. Si vous acceptez tous les termes de cet accord, sélectionnez la première option ci-dessous. $_CLICK
+ ComponentsText=Cochez les composants à installer et décochez ceux à ne pas installer. $_CLICK
+ ComponentsSubText2_NoInstTypes=Sélectionnez les composants à installer :
+-DirText=Le programme d’installation installera $BrandFullNameDA dans le dossier suivant. Pour l’installer dans un dossier différent, cliquez sur « Parcourir… » et sélectionnez un autre dossier. $_CLICK
++DirText=Le programme d’installation installera le $BrandFullNameDA dans le dossier suivant. Pour l’installer dans un dossier différent, cliquez sur « Parcourir… » et sélectionnez un autre dossier. $_CLICK
+ DirSubText=Dossier de destination
+ DirBrowseText=Sélectionnez le dossier dans lequel installer $BrandFullNameDA :
+ SpaceAvailable="Espace disque disponible : "
+ SpaceRequired="Espace disque requis : "
+-UninstallingText=$BrandFullNameDA sera désinstallé du dossier suivant. $_CLICK
++UninstallingText=Le $BrandFullNameDA sera désinstallé du dossier suivant. $_CLICK
+ UninstallingSubText=Désinstallation à partir de :
+ FileError=Erreur d’écriture lors de l’ouverture du fichier : \r\n\r\n$0\r\n\r\nCliquez sur « Annuler » pour arrêter l’installation,\r\n« Recommencer » pour essayer à nouveau ou\r\n« Ignorer » pour ignorer ce fichier.
+ FileError_NoIgnore=Erreur d’écriture lors de l’ouverture du fichier : \r\n\r\n$0\r\n\r\nCliquez sur « Recommencer » pour essayer à nouveau ou\r\n« Annuler » pour arrêter l’installation.

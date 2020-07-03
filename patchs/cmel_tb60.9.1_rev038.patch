@@ -1,0 +1,29 @@
+# HG changeset patch
+# User pm
+# Date 1526645740 -7200
+#      Fri May 18 14:15:40 2018 +0200
+# Node ID a4ac4fd6fb4ca6fec282e68bec887405a333ea42
+# Parent  24df9728c2729cabb9f650335bd4fe2f38816ef3
+Ticket mantis 0003872 : TB 31 genere une errreur Courrier entrant : mailbox does not exist lors du listage des dossiers de boite partagees
+
+diff --git a/comm-esr60/comm/mail/components/activity/modules/alertHook.js b/comm-esr60/comm/mail/components/activity/modules/alertHook.js
+--- a/comm-esr60/comm/mail/components/activity/modules/alertHook.js
++++ b/comm-esr60/comm/mail/components/activity/modules/alertHook.js
+@@ -38,6 +38,17 @@
+   QueryInterface: XPCOMUtils.generateQI([Ci.nsIMsgUserFeedbackListener]),
+ 
+   onAlert: function (aMessage, aUrl) {
++  
++    //cm2 - mantis 3872
++    if (aUrl && aUrl.server && !aUrl.isMessageUri && aUrl.folder){
++      if (null!=aMessage.match(/.*Mailbox does not exist\.$/) &&
++          null!=aUrl.folder.server.getCharValue("pacome.confid")){
++        Services.console.logStringMessage("Mailbox does not exist pour dossier:"+aUrl.folder.URI);
++        return true;
++      }
++    }
++    //fin cm2 mantis 3872
++    
+     // Create a new warning.
+     let warning = new nsActWarning(aMessage, this.activityMgr, "");
+ 

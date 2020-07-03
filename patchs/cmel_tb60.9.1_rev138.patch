@@ -1,0 +1,35 @@
+# HG changeset patch
+# User Ludovic <>
+# Date 1582043778 -3600
+#      Tue Feb 18 17:36:18 2020 +0100
+# Node ID 224efc14994d1d6ed24924d52c97e8b9df3e5151
+# Parent  aef2d517987f087f49c507eed1ef017d8be0b46e
+0005306: Emetteur d'un message dans le courrielleur basé sur Thunderbird 60 (2eme révision)
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -2855,7 +2855,7 @@
+ 
+   gComposeType = params.type;
+ 
+-  /* remplace par ticket 5306
++  // Deuxième CORRECTION ticket 5306
+   // Detect correct identity when missing or mismatched.
+   // An identity with no email is likely not valid.
+   // When editing a draft, 'params.identity' is pre-populated with the identity
+@@ -2907,10 +2907,10 @@
+         (suitableCount == 0 && !emailSimilar(from, params.identity.email))))
+       gComposeNotificationBar.setIdentityWarning(params.identity.identityName);
+   }
+-  */
+-
+-  identityList.selectedItem =
+-    identityList.getElementsByAttribute("identitykey", params.identity.key)[0];
++  
++  // #5306 on ajoute le if pour éviter de vérifier l'identity si elle est null
++  if(params.identity)
++    identityList.selectedItem = identityList.getElementsByAttribute("identitykey", params.identity.key)[0];
+     
+   /* remplace par ticket 5306
+   // mantis 2749 Emetteur par défaut d'un message émis depuis le dossier modèle

@@ -1,0 +1,47 @@
+# HG changeset patch
+# User pm
+# Date 1526564969 -7200
+#      Thu May 17 15:49:29 2018 +0200
+# Node ID 631126dfd1bae0be143fc74697d32c09ea433e97
+# Parent  7eac8c3950819146caf14599c8ea99215d987558
+Ticket mantis 0002594: Affichage du carnet d'addresse dans un onglet du courrielleur
+
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCardView.js b/comm-esr60/comm/mail/components/addrbook/content/abCardView.js
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCardView.js
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCardView.js
+@@ -192,7 +192,10 @@
+                mailListURI : realCard.mailListURI
+   };
+ 
+-  var data = top.cvData;
++  //cm2 - Bug mantis 0002594: Affichage du carnet d'addresse dans un onglet du courrielleur
++  //var data = top.cvData;
++  var data = document.defaultView.cvData;
++  //fin cm2
+   var visible;
+ 
+   // Contact photo
+@@ -390,7 +393,10 @@
+   cvSetVisible(data.cvbWork, visible);
+ 
+   // make the card view box visible
+-  cvSetVisible(top.cvData.CardViewBox, true);
++  //cm2 - Bug mantis 0002594: Affichage du carnet d'addresse dans un onglet du courrielleur
++  //cvSetVisible(top.cvData.CardViewBox, true);
++  cvSetVisible(document.defaultView.cvData.CardViewBox, true);
++  //fin cm2
+ }
+ 
+ function setBuddyIcon(card, buddyIcon)
+@@ -428,7 +434,10 @@
+ 
+ function ClearCardViewPane()
+ {
+-  cvSetVisible(top.cvData.CardViewBox, false);
++  //cm2 - Bug mantis 0002594: Affichage du carnet d'addresse dans un onglet du courrielleur
++  //cvSetVisible(top.cvData.CardViewBox, false);
++  cvSetVisible(document.defaultView.cvData.CardViewBox, false);
++  //fin cm2
+ }
+ 
+ function cvSetNodeWithLabel(node, label, text)

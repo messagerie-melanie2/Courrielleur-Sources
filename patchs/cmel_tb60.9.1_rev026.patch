@@ -1,0 +1,46 @@
+# HG changeset patch
+# User pm
+# Date 1526633693 -7200
+#      Fri May 18 10:54:53 2018 +0200
+# Node ID 69dcf17cb5bf1e759d706d8e923e6e97970d7c25
+# Parent  15eb7924f18a17f87e6d092b4d900e36de698b16
+Ticket mantis 0002842 - Bandeau telemetrie dans thunderbird (suppression) - onglet avance masque
+
+diff --git a/comm-esr60/comm/mail/components/preferences/advanced.xul b/comm-esr60/comm/mail/components/preferences/advanced.xul
+--- a/comm-esr60/comm/mail/components/preferences/advanced.xul
++++ b/comm-esr60/comm/mail/components/preferences/advanced.xul
+@@ -150,7 +150,7 @@
+       <tabs id="advancedPrefsTabs">
+         <tab id="generalTab" label="&itemGeneral.label;"/>
+ #ifdef MOZ_DATA_REPORTING
+-        <tab id="dataChoicesTab" label="&dataChoicesTab.label;"/>
++        <tab id="dataChoicesTab" label="&dataChoicesTab.label;" hidden="true"/>
+ #endif
+         <tab id="networkingTab" label="&itemNetworking.label;"/>
+ #ifdef MOZ_UPDATER
+diff --git a/comm-esr60/modules/libpref/init/all.js b/comm-esr60/modules/libpref/init/all.js
+--- a/comm-esr60/modules/libpref/init/all.js
++++ b/comm-esr60/modules/libpref/init/all.js
+@@ -1048,16 +1048,19 @@
+ 
+ // Telemetry settings.
+ // Server to submit telemetry pings to.
+-pref("toolkit.telemetry.server", "https://incoming.telemetry.mozilla.org");
++pref("toolkit.telemetry.server", "");
+ // Telemetry server owner. Please change if you set toolkit.telemetry.server to a different server
+-pref("toolkit.telemetry.server_owner", "Mozilla");
++pref("toolkit.telemetry.server_owner", "");
+ // Information page about telemetry (temporary ; will be about:telemetry in the end)
+-pref("toolkit.telemetry.infoURL", "https://www.mozilla.org/legal/privacy/firefox.html#telemetry");
++pref("toolkit.telemetry.infoURL", "");
+ // Determines whether full SQL strings are returned when they might contain sensitive info
+ // i.e. dynamically constructed SQL strings or SQL executed by addons against addon DBs
+ pref("toolkit.telemetry.debugSlowSql", false);
+ // Whether to use the unified telemetry behavior, requires a restart.
+ pref("toolkit.telemetry.unified", true);
++pref("toolkit.telemetry.prompted", 2);
++
++
+ // AsyncShutdown delay before crashing in case of shutdown freeze
+ #ifndef MOZ_ASAN
+ pref("toolkit.asyncshutdown.crash_timeout", 60000); // 1 minute

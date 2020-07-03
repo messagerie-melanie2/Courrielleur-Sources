@@ -1,0 +1,98 @@
+# HG changeset patch
+# User pm
+# Date 1548264074 -3600
+#      Wed Jan 23 18:21:14 2019 +0100
+# Node ID fd0f5ca42340b1f7a36c55814d253b715da610cf
+# Parent  1bde4270654efa73f1893f4b6f35e08ae334a14d
+Ticket mantis 0005129: Amélioration du comportement lors d'erreur imaps dans un contexte de fenêtre de composition
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -30,6 +30,8 @@
+   LightweightThemeManager: "resource://gre/modules/LightweightThemeManager.jsm",
+ });
+ 
++Components.utils.import("resource:///modules/cm2TestImapM2.jsm");
++
+ /**
+  * interfaces
+  */
+@@ -3242,6 +3244,53 @@
+  */
+ function GenericSendMessage(msgType)
+ {
++  // mantis 5129
++  if ((nsIMsgCompDeliverMode.SaveAsDraft==msgType ||
++      nsIMsgCompDeliverMode.AutoSaveAsDraft==msgType) &&
++      !Services.io.offline){
++
++    function rappel(){
++
++      if (nsIMsgCompDeliverMode.AutoSaveAsDraft!=msgType){
++        window.setCursor("auto");
++      }
++      
++      if (Services.io.offline) {
++        Services.prompt.alert(window, "",
++                              getComposeBundle().getString("cm2EnvoiOffline"));
++      }
++      
++      GenericSendMessageTB(msgType);
++    }
++
++    // si le dossier de l'emetteur est du type imap => test de connexion
++    // dans le cas brouillon ou modele
++    let ident=getCurrentIdentity();
++    if (ident){
++      
++      let dossier=ident.draftFolder;
++      
++      if (dossier.length &&
++          0==dossier.indexOf("imap:")){
++
++        // disable the ui if we're not auto-saving
++        if (nsIMsgCompDeliverMode.AutoSaveAsDraft!=msgType){
++          window.setCursor("wait");
++          ToggleWindowLock(true);
++        }
++        
++        cm2TestImapM2(rappel);
++
++        return;     
++      }
++    }
++  } 
++
++  GenericSendMessageTB(msgType);
++}
++
++function GenericSendMessageTB(msgType)
++{
+   var msgCompFields = gMsgCompose.compFields;
+ 
+   Recipients2CompFields(msgCompFields);
+@@ -6706,7 +6755,7 @@
+       !gSendOperationInProgress && !gSaveOperationInProgress)
+   {
+     GenericSendMessage(nsIMsgCompDeliverMode.AutoSaveAsDraft);
+-    gAutoSaveKickedIn = true;
++    gAutoSaveKickedIn = true;      
+   }
+ 
+   gAutoSaveTimeout = setTimeout(AutoSave, gAutoSaveInterval);
+diff --git a/fr-esr60/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties b/fr-esr60/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties
+--- a/fr-esr60/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties
++++ b/fr-esr60/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties
+@@ -450,6 +450,11 @@
+ replaceButton.accesskey=l
+ replaceButton.tooltip=Afficher le dialogue Rechercher et remplacer
+ 
++# mantis 5129
++cm2EnvoiOffline=Les serveurs Mél sont actuellement injoignables.\n\n\
++Afin que vous puissiez continuer à travailler sans difficulté, le Courrielleur est passé en mode hors connexion. Il ne vérifiera plus l'arrivée de nouveaux messages et placera en attente les messages que vous tenterez d'envoyer.\n\n\
++N'oubliez pas de cliquer sur sur le bouton "Relever" en haut à gauche de l'écran lorsque vous souhaiterez quitter le mode hors connexion.
++
+ ## LOCALIZATION NOTE(blockedAllowResource): %S is the URL to load.
+ blockedAllowResource=Débloquer %S
+ ## LOCALIZATION NOTE (blockedContentMessage): Semi-colon list of plural forms.

@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1527081513 -7200
+#      Wed May 23 15:18:33 2018 +0200
+# Node ID 9cd1be3035e064f139549a9621536140e3f387e7
+# Parent  ccf75c9ef1ab4903b2bf0e23e0bf7b6e7c7df9eb
+Ticket mantis 0004294: Mise en forme paragraphe en redaction HTML
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -289,7 +289,7 @@
+ pref("mail.pane_config.dynamic",            0);
+ pref("mailnews.reuse_thread_window2",     true);
+ pref("editor.singleLine.pasteNewlines", 4);  // substitute commas for new lines in single line text boxes
+-pref("editor.CR_creates_new_p", true);
++pref("editor.CR_creates_new_p", false);
+ pref("mail.compose.default_to_paragraph", true);
+ 
+ // hidden pref to ensure a certain number of headers in the message pane

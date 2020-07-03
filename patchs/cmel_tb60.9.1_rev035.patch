@@ -1,0 +1,45 @@
+# HG changeset patch
+# User pm
+# Date 1526645581 -7200
+#      Fri May 18 14:13:01 2018 +0200
+# Node ID 9226723e7719a88dc36c4b0e6c90a1a1c7133294
+# Parent  f2a28ed36aa7a5434cb5942475bd819121ba5baa
+Ticket mantis 0002803 - Reflexions autour du mimeTypes.rdf
+
+diff --git a/comm-esr60/uriloader/exthandler/nsHandlerService.js b/comm-esr60/uriloader/exthandler/nsHandlerService.js
+--- a/comm-esr60/uriloader/exthandler/nsHandlerService.js
++++ b/comm-esr60/uriloader/exthandler/nsHandlerService.js
+@@ -449,6 +449,11 @@
+   },
+ 
+   getTypeFromExtension: function HS_getTypeFromExtension(aFileExtension) {
++    
++    if (!this._cm2mimeTypesRdf) {
++      return "";
++    }
++
+     var fileExtension = aFileExtension.toLowerCase();
+     var typeID;
+ 
+@@ -473,6 +478,21 @@
+     return "";
+   },
+ 
++  __cm2mimeTypesRdf:null,
++
++  get _cm2mimeTypesRdf() {
++
++    var prefSvc=Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefService);
++
++    try {
++      var prefBranch=prefSvc.getBranch("courrielleur.");
++      this.__cm2mimeTypesRdf=prefBranch.getBoolPref("mimeTypesRdf");
++    } catch (e) {
++      this.__cm2mimeTypesRdf=false;
++    }
++
++    return this.__cm2mimeTypesRdf;
++  },  
+ 
+   //**************************************************************************//
+   // Retrieval Methods

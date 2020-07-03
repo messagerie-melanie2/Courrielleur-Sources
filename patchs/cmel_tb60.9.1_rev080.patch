@@ -1,0 +1,100 @@
+# HG changeset patch
+# User pm
+# Date 1527089212 -7200
+#      Wed May 23 17:26:52 2018 +0200
+# Node ID 4d5b2801bf5dae441e69392dc2aeaa96cec25e61
+# Parent  810405fbb35c72ebd710aebac64e5333897c7a6e
+Ticket mantis 0004545: Contacts fusionnes
+
+diff --git a/comm-esr60/comm/mail/base/content/editContactOverlay.js b/comm-esr60/comm/mail/base/content/editContactOverlay.js
+--- a/comm-esr60/comm/mail/base/content/editContactOverlay.js
++++ b/comm-esr60/comm/mail/base/content/editContactOverlay.js
+@@ -204,36 +204,67 @@
+       return;
+     }
+ 
+-    let originalBook = this._cardDetails.book;
+-
+-    let abURI = document.getElementById("editContactAddressBookList").value;
+-    if (abURI != originalBook.URI) {
+-      this._cardDetails.book = MailServices.ab.getDirectory(abURI);
+-    }
+-
+     // We can assume the email address stays the same, so just update the name
+     var newName = document.getElementById("editContactName").value;
+-    if (newName != this._cardDetails.card.displayName) {
+-      this._cardDetails.card.displayName = newName;
+-      this._cardDetails.card.setProperty("PreferDisplayName", true);
++    
++    function getCardFromBook(book, email) {
++      let cards = book.childCards;
++      while (cards.hasMoreElements()) {
++        let bookcard = cards.getNext().QueryInterface(Components.interfaces.nsIAbCard);
++        if (email == bookcard.primaryEmail ||
++            email == bookcard.getProperty("SecondEmail", "") ||
++            email == bookcard.getProperty("ThirdEmail", ""))
++          return bookcard;
++      }
++      return null;
+     }
+ 
+     // Save the card
+-    if (this._cardDetails.book.hasCard(this._cardDetails.card)) {
+-      // Address book wasn't changed.
+-      this._cardDetails.book.modifyCard(this._cardDetails.card);
+-    }
+-    else {
++    let abURI = document.getElementById("editContactAddressBookList").value;
++ 
++    if (abURI != this._cardDetails.book.URI) {
++      
++      let originalBook = this._cardDetails.book;
+       // We changed address books for the card.
+ 
+-      // Add it to the chosen address book...
+-      this._cardDetails.book.addCard(this._cardDetails.card);
++      this._cardDetails.book = MailServices.ab.getDirectory(abURI);
++      
++      var cardEmail = this._cardDetails.card.primaryEmail;
++      
++      var cardbook = getCardFromBook(this._cardDetails.book, cardEmail);
++      
++      if (cardbook){       
++        // update card
++    
++        if (newName != cardbook.displayName) {
++          cardbook.displayName = newName;
++          cardbook.setProperty("PreferDisplayName", true);
++        } 
++        
++        this._cardDetails.book.modifyCard(cardbook);
++        
++      } else {
++            
++        // Add it to the chosen address book...             
++        this._cardDetails.book.addCard(this._cardDetails.card);  
++             
++      }      
+ 
+       // ...and delete it from the old place.
+-      let cardArray = Cc["@mozilla.org/array;1"]
+-                              .createInstance(Ci.nsIMutableArray);
+-      cardArray.appendElement(this._cardDetails.card);
+-      originalBook.deleteCards(cardArray);
++      let cardArray = Cc["@mozilla.org/array;1"].createInstance(Components.interfaces.nsIMutableArray);
++      var original=getCardFromBook(originalBook, cardEmail);    
++      cardArray.appendElement(original, false);
++      originalBook.deleteCards(cardArray); 
++      
++    } else {
++    
++      // Address book wasn't changed.          
++      if (newName != this._cardDetails.card.displayName) {
++        this._cardDetails.card.displayName = newName;
++        this._cardDetails.card.setProperty("PreferDisplayName", true);
++      }
++      
++      this._cardDetails.book.modifyCard(this._cardDetails.card);
+     }
+ 
+     this.panel.hidePopup();

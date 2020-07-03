@@ -1,0 +1,38 @@
+# HG changeset patch
+# User pm
+# Date 1546533848 -3600
+#      Thu Jan 03 17:44:08 2019 +0100
+# Node ID ccccc854670498d7a3c4d9efbb767599e2fd16e8
+# Parent  096766fafbe7b587f25c5254c6c3a893bb5d7e9d
+Ticket mantis 0005170: Archivage deroutant
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+@@ -408,7 +408,7 @@
+ 
+   <key id="key_toggleRead" key="&toggleReadCmd.key;"                 oncommand="goDoCommand('cmd_toggleRead');"/>
+   <key id="key_toggleFlagged" key="&markStarredCmd.key;"             oncommand="goDoCommand('cmd_markAsFlagged');"/>
+-  <key id="key_markJunk" key="&markAsJunkCmd.key;"                   oncommand="goDoCommand('cmd_markAsJunk');"/>
++  <key id="key_markJunk" key="&markAsJunkCmd.key;"                   oncommand="goDoCommand('cmd_markAsJunk');" modifiers="alt"/>
+   <key id="key_markNotJunk" key="&markAsNotJunkCmd.key;"             oncommand="goDoCommand('cmd_markAsNotJunk');"
+        modifiers="shift"/>
+ 
+@@ -426,7 +426,7 @@
+   <key id="key_nextUnreadThread" key="&nextUnreadThread.key;"        oncommand="goDoCommand('cmd_nextUnreadThread')"/>
+   <key id="key_previousMsg" key="&prevMsgCmd.key;"                   oncommand="goDoCommand('cmd_previousMsg')"/>
+   <key id="key_previousUnreadMsg" key="&prevUnreadMsgCmd.key;"       oncommand="goDoCommand('cmd_previousUnreadMsg')"/>
+-  <key id="key_archive" key="&archiveMsgCmd.key;"                    oncommand="goDoCommand('cmd_archive')"/>
++  <key id="key_archive" key="&archiveMsgCmd.key;"                    oncommand="goDoCommand('cmd_archive')" modifiers="alt"/>
+   <key id="key_goForward" key="&goForwardCmd.commandKey;"            oncommand="goDoCommand('cmd_goForward')"/>
+   <key id="key_goBack" key="&goBackCmd.commandKey;"                  oncommand="goDoCommand('cmd_goBack')"/>
+   <key id="key_goChat" key="&goChatCmd2.key;"                        oncommand="goDoCommand('cmd_chat')" modifiers="accel,shift"/>
+@@ -439,7 +439,7 @@
+   <key id="key_editAsNew" key="&editAsNewMsgCmd.key;"                oncommand="goDoCommand('cmd_editAsNew')" modifiers="accel"/>
+   <key id="key_newMsgFromTemplate" keycode="&newMsgFromTemplateCmd.keycode;"/><!-- for display on menus only -->
+   <key id="key_watchThread" key="&watchThreadMenu.key;"              oncommand="goDoCommand('cmd_watchThread')" />
+-  <key id="key_killThread" key="&killThreadMenu.key;"                oncommand="goDoCommand('cmd_killThread')" />
++  <key id="key_killThread" key="&killThreadMenu.key;"                oncommand="goDoCommand('cmd_killThread')" modifiers="alt"/>
+   <key id="key_killSubthread" key="&killSubthreadMenu.key;"          oncommand="goDoCommand('cmd_killSubthread')" modifiers="shift" />
+   <key id="key_openMessage" key="&openMessageWindowCmd.key;"         oncommand="goDoCommand('cmd_openMessage')" modifiers="accel"/>
+   <key id="key_openConversation" key="&openConversationCmd.key;"     oncommand="goDoCommand('cmd_openConversation')" modifiers="accel, shift"/>

@@ -1,0 +1,33 @@
+# HG changeset patch
+# User pm
+# Date 1562338114 -7200
+#      Fri Jul 05 16:48:34 2019 +0200
+# Node ID d803b8c87f9950be8be695fa8527a9be0c7aad67
+# Parent  1d82aaa761dc2df63d26971fb901e82d38a99d24
+Remplacement de 'commonDialog-overlay.js' (module pacome) par un patch thunderbird
+
+diff --git a/comm-esr60/comm/mail/components/activity/modules/alertHook.js b/comm-esr60/comm/mail/components/activity/modules/alertHook.js
+--- a/comm-esr60/comm/mail/components/activity/modules/alertHook.js
++++ b/comm-esr60/comm/mail/components/activity/modules/alertHook.js
+@@ -38,6 +38,21 @@
+   QueryInterface: XPCOMUtils.generateQI([Ci.nsIMsgUserFeedbackListener]),
+ 
+   onAlert: function (aMessage, aUrl) {
++    
++    // courrielleur
++    if (-1!=aMessage.indexOf("Mailbox does not exist")){
++      Services.console.logStringMessage("Mailbox does not exist");
++      return true;
++    }
++    if (-1!=aMessage.indexOf("Invalid mailbox name")){
++      Services.console.logStringMessage("Invalid mailbox name");
++      return true;
++    }
++    //cas v2.4 /Le serveur de courrier .* n'est pas un serveur de type IMAP4/
++    if (aMessage.match(/Le serveur de courrier .* n'est pas un serveur de type IMAP4/)){
++      Services.console.logStringMessage(aMessage);
++      return true;
++    }
+   
+     //cm2 - mantis 3872
+     if (aUrl && aUrl.server && !aUrl.isMessageUri && aUrl.folder){

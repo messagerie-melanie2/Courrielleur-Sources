@@ -1,0 +1,24 @@
+# HG changeset patch
+# User pm
+# Date 1526629431 -7200
+#      Fri May 18 09:43:51 2018 +0200
+# Node ID 428b5e1287ba3efd3d1d96131fe5218b907f0520
+# Parent  deb7e33924dcc3aaf39600b8ee0d983e21a81130
+Ticket mantis 0002897: evolutions de l'archivage V5
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+@@ -1966,8 +1966,10 @@
+  */
+ function MsgArchiveSelectedMessages(event)
+ {
+-  let batchMover = new BatchMessageMover();
+-  batchMover.archiveMessages(gFolderDisplay.selectedMessages);
++  //fonction archibald v5
++  archibaldArchiveSelectedMessages(event)
++  //let batchMover = new BatchMessageMover();
++  //batchMover.archiveMessages(gFolderDisplay.selectedMessages);
+ }
+ 
+ function MsgForwardMessage(event)

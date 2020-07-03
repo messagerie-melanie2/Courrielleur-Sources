@@ -1,0 +1,38 @@
+# HG changeset patch
+# User pm
+# Date 1527082543 -7200
+#      Wed May 23 15:35:43 2018 +0200
+# Node ID 98c19dc27613ea5fb5be77b760caf1402954b610
+# Parent  8bf7fa0e9fc084e7a28a856433f4fba1b2c6da24
+Ticket mantis 0004336: recherche Web
+
+diff --git a/comm-esr60/comm/mail/locales/search/list.json b/comm-esr60/comm/mail/locales/search/list.json
+--- a/comm-esr60/comm/mail/locales/search/list.json
++++ b/comm-esr60/comm/mail/locales/search/list.json
+@@ -121,7 +121,7 @@
+     "fr": {
+       "default": {
+         "visibleDefaultEngines": [
+-          "amazon-france", "bing", "wikipedia-fr", "yahoo-france", "cnrtl-tlfi-fr"
++          "qwant", "google", "amazon-france", "bing", "wikipedia-fr", "yahoo-france", "cnrtl-tlfi-fr"
+         ]
+       }
+     },
+diff --git a/fr-esr60/fr/mail/chrome/messenger-region/region.properties b/fr-esr60/fr/mail/chrome/messenger-region/region.properties
+--- a/fr-esr60/fr/mail/chrome/messenger-region/region.properties
++++ b/fr-esr60/fr/mail/chrome/messenger-region/region.properties
+@@ -3,11 +3,11 @@
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ # Default search engine
+-browser.search.defaultenginename=Bing
++browser.search.defaultenginename=Qwant
+ 
+ # Search engine order (order displayed in the search bar dropdown)s
+-browser.search.order.1=Bing
+-browser.search.order.2=Yahoo
++browser.search.order.1=Qwant
++browser.search.order.2=Google
+ 
+ # To make mapit buttons to disappear in the addressbook, specify empty string.  For example:
+ # mail.addr_book.mapit_url.format=

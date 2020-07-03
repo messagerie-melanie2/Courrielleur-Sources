@@ -1,0 +1,40 @@
+# HG changeset patch
+# User pm
+# Date 1526564470 -7200
+#      Thu May 17 15:41:10 2018 +0200
+# Node ID 80d8135fa7797f190d512eb74ba020d68be80737
+# Parent  45c882a98158b7059f2ef7b044c09acc7e321f57
+Ticket mantis 0002118: Creation de noms en francais pour les dossiers Modeles Brouillons et Elements envoyes
+
+diff --git a/comm-esr60/comm/mailnews/local/src/nsLocalMailFolder.cpp b/comm-esr60/comm/mailnews/local/src/nsLocalMailFolder.cpp
+--- a/comm-esr60/comm/mailnews/local/src/nsLocalMailFolder.cpp
++++ b/comm-esr60/comm/mailnews/local/src/nsLocalMailFolder.cpp
+@@ -523,7 +523,15 @@
+   if (msgParent)
+   {
+     nsString folderName;
+-    GetName(folderName);
++    
++    //cm2 - bug 2118
++    nsCOMPtr <nsIFile> folderPath;
++    rv = GetFilePath(getter_AddRefs(folderPath));
++    if (NS_SUCCEEDED(rv)) {
++      rv = folderPath->GetLeafName(folderName);
++    } 
++    if (NS_FAILED(rv)) 
++      GetName(folderName);
+     rv = msgParent->CreateSubfolder(folderName, nullptr);
+     // by definition, this is OK.
+     if (rv == NS_MSG_FOLDER_EXISTS)
+diff --git a/fr-esr60/fr/mail/chrome/messenger/messenger.properties b/fr-esr60/fr/mail/chrome/messenger/messenger.properties
+--- a/fr-esr60/fr/mail/chrome/messenger/messenger.properties
++++ b/fr-esr60/fr/mail/chrome/messenger/messenger.properties
+@@ -180,7 +180,7 @@
+ # LOCALIZATION NOTE (inboxFolderName): OK to translate all foldernames, bugzilla #57440 & bugzilla #23625 fixed
+ inboxFolderName=Courrier entrant
+ trashFolderName=Corbeille
+-sentFolderName=Envoyés
++sentFolderName=Éléments envoyés
+ draftsFolderName=Brouillons
+ templatesFolderName=Modèles
+ outboxFolderName=Messages en attente

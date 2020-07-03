@@ -1,0 +1,27 @@
+# HG changeset patch
+# User pm
+# Date 1526568084 -7200
+#      Thu May 17 16:41:24 2018 +0200
+# Node ID 7b00c99f0f2dc10a5d2d73bc6e72ec11dfc551b8
+# Parent  9c7f53ec4b8b24459bc414f2c8d10c26d2e1bc09
+Ticket mantis 0002500: Interdire l'ajout de contact sans courriel dans les listes
+
+diff --git a/comm-esr60/comm/mailnews/addrbook/content/abDragDrop.js b/comm-esr60/comm/mailnews/addrbook/content/abDragDrop.js
+--- a/comm-esr60/comm/mailnews/addrbook/content/abDragDrop.js
++++ b/comm-esr60/comm/mailnews/addrbook/content/abDragDrop.js
+@@ -295,6 +295,15 @@
+           cardArray.appendElement(card);
+           srcDirectory.deleteCards(cardArray);
+         }
++        //Bug mantis 0002500: Interdire l'ajout de contact sans courriel dans les listes
++        else {
++          let c=gAbView.getCardFromRow(rows[j]);
++          if (""==c.primaryEmail) {
++            dragSession.canDrop = false;
++            return false;
++          }
++        }
++        //fin Bug mantis 0002500
+       }
+     }
+ 

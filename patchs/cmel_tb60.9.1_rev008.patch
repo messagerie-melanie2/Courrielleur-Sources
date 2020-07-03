@@ -1,0 +1,45 @@
+# HG changeset patch
+# User pm
+# Date 1526568608 -7200
+#      Thu May 17 16:50:08 2018 +0200
+# Node ID 29ddb46094f07de371ab1b5f0e2cc3ce8150667b
+# Parent  7b00c99f0f2dc10a5d2d73bc6e72ec11dfc551b8
+Modification de presentation de la boite de selection de profile
+
+diff --git a/comm-esr60/toolkit/profile/content/profileSelection.xul b/comm-esr60/toolkit/profile/content/profileSelection.xul
+--- a/comm-esr60/toolkit/profile/content/profileSelection.xul
++++ b/comm-esr60/toolkit/profile/content/profileSelection.xul
+@@ -42,15 +42,6 @@
+ 
+   <hbox class="profile-box indent" flex="1">
+ 
+-    <vbox id="managebuttons">
+-      <button id="newbutton" label="&newButton.label;"
+-              accesskey="&newButton.accesskey;" oncommand="CreateProfileWizard();"/>
+-      <button id="renbutton" label="&renameButton.label;"
+-              accesskey="&renameButton.accesskey;" oncommand="RenameProfile();"/>
+-      <button id="delbutton" label="&deleteButton.label;"
+-              accesskey="&deleteButton.accesskey;" oncommand="ConfirmDelete();"/>
+-    </vbox>
+-
+     <separator flex="1"/>
+ 
+     <vbox flex="1">
+@@ -58,6 +49,17 @@
+                ondblclick="onProfilesDblClick(event)"
+                onkeypress="onProfilesKey(event);">
+       </listbox>
++      
++      <!-- cm2 - Modification de presentation de la boite de selection de profile -->
++      <hbox id="managebuttons">
++        <button id="newbutton" label="&newButton.label;"
++                accesskey="&newButton.accesskey;" oncommand="CreateProfileWizard();"/>
++        <button id="renbutton" label="&renameButton.label;"
++                accesskey="&renameButton.accesskey;" oncommand="RenameProfile();"/>
++        <button id="delbutton" label="&deleteButton.label;"
++                accesskey="&deleteButton.accesskey;" oncommand="ConfirmDelete();"/>
++      </hbox>
++      <!-- fin cm2 -->      
+ 
+       <!-- Bug 257777 -->
+       <checkbox id="offlineState" label="&offlineState.label;" accesskey="&offlineState.accesskey;"/>

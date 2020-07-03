@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1540212470 -7200
+#      Mon Oct 22 14:47:50 2018 +0200
+# Node ID c91e9aae20ba35aa33ddf3e79354f3ca051c25fe
+# Parent  c0e897a0cd3b36385b9795d766cffe9da248d17b
+Préférence mail.threadpane.use_correspondents à false (nécessaire pour affichage expéditeur)
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -311,7 +311,7 @@
+ pref("mail.threadpane.padding.bottom_percent", 10);
+ 
+ // Use correspondents column instead of from/recipient columns.
+-pref("mail.threadpane.use_correspondents", true);
++pref("mail.threadpane.use_correspondents", false);
+ 
+ // only affects cookies from RSS articles
+ // 0-Accept, 1-dontAcceptForeign, 2-dontUse

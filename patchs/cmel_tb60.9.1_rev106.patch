@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1553262729 -3600
+#      Fri Mar 22 14:52:09 2019 +0100
+# Node ID 2b03e18bbf25abfb29582c77e758780c0eabd8f4
+# Parent  852b711f60e51d748c64452bcc373bce60029982
+Numéro de version de l'installateur windows 8.5
+
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in b/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
+--- a/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
++++ b/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
+@@ -6,7 +6,7 @@
+ 
+ # These defines should match application.ini settings
+ !define AppName               "Courrielleur"
+-!define AppVersion            "8.0"
++!define AppVersion            "8.5"
+ 
+ !define GREVersion            @MOZILLA_VERSION@
+ !define AB_CD                 "@AB_CD@"

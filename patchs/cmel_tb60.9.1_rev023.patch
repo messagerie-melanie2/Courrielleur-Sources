@@ -1,0 +1,27 @@
+# HG changeset patch
+# User pm
+# Date 1526632241 -7200
+#      Fri May 18 10:30:41 2018 +0200
+# Node ID a1e15a0aca4db13fdb68bbf7a47c3e5b3170f8c6
+# Parent  d4a664e73be0d16b7a7e94ef64427e4128c5f10e
+Ticket mantis 0003362: Un xpi reçu dans un message peut etre installe en double-cliquant dessus
+
+diff --git a/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.js b/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.js
+--- a/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.js
++++ b/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.js
+@@ -1859,6 +1859,15 @@
+                            .getString("emptyAttachment");
+       msgWindow.promptDialog.alert(null, prompt);
+     } else {
++
++      if ("application/x-xpinstall"==this.contentType){
++        //bug mantis 0003362: Un xpi reçu dans un message peut être installé en double-cliquant dessus
++        messenger.saveAttachment(this.contentType, this.url,
++                             encodeURIComponent(this.name),
++                             this.uri, this.isExternalAttachment);
++        return;
++      }
++
+       messenger.openAttachment(this.contentType, this.url,
+                                encodeURIComponent(this.name),
+                                this.uri, this.isExternalAttachment);

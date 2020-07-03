@@ -1,0 +1,55 @@
+# HG changeset patch
+# User pm
+# Date 1526564690 -7200
+#      Thu May 17 15:44:50 2018 +0200
+# Node ID 7eac8c3950819146caf14599c8ea99215d987558
+# Parent  efabfbcfaa0efc354be14c77d39aa2491db24d5d
+Ticket mantis 2694 : Ajout d'une colonne categorie dans les choix possibles du carnet d'adresse
+
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul b/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul
+--- a/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul
++++ b/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul
+@@ -761,6 +761,10 @@
+                    persist="hidden ordinal width sortDirection" flex="1"
+                    label="&WorkPhone.label;"/>
+           <splitter class="tree-splitter"/>
++          <treecol id="Categories"
++                   persist="hidden ordinal width sortDirection" flex="1"
++                   label="&Categories.label;"/>
++          <splitter class="tree-splitter"/>
+           <treecol id="addrbook"
+                    persist="hidden ordinal width sortDirection" flex="1"
+                    hidden="true"
+diff --git a/comm-esr60/comm/mailnews/addrbook/src/nsAbView.cpp b/comm-esr60/comm/mailnews/addrbook/src/nsAbView.cpp
+--- a/comm-esr60/comm/mailnews/addrbook/src/nsAbView.cpp
++++ b/comm-esr60/comm/mailnews/addrbook/src/nsAbView.cpp
+@@ -474,6 +474,18 @@
+     rv = NS_OK;
+     _retval.Truncate();
+   }
++  //cm2 - Bug mantis 2694 : Ajout d'une colonne categorie dans les choix possibles du carnet d'adresse
++  if (!NS_strcmp(colID, u"Categories"))
++  {
++    char16_t *cur = _retval.BeginWriting();
++    char16_t *end = _retval.EndWriting();
++
++    for (; cur < end; ++cur) {
++      if (char16_t('\x1a') == *cur)
++        *cur = char16_t(',');
++    }
++  }
++  //fin Bug mantis 2694
+   return rv;
+ }
+ 
+diff --git a/fr-esr60/fr/mail/chrome/messenger/addressbook/abMainWindow.dtd b/fr-esr60/fr/mail/chrome/messenger/addressbook/abMainWindow.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/addressbook/abMainWindow.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/addressbook/abMainWindow.dtd
+@@ -219,6 +219,7 @@
+ <!ENTITY sortDescending.accesskey                       "c">
+ <!ENTITY _PhoneticName.label                            "Nom phonétique">
+ <!ENTITY _PhoneticName.accesskey                        "h">
++<!ENTITY Categories.label                               "Catégories">
+ 
+ <!-- Card Summary Pane -->
+ <!-- Box Headings -->

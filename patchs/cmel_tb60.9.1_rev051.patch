@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1457966027 -3600
+#      Mon Mar 14 15:33:47 2016 +0100
+# Node ID 63a5bda32a1bbc1afcd90c9e5ccbb9ea06f22961
+# Parent  7985271ad2bdd24ca5092bcc0c2749fa950ad198
+Ticket mantis 0003936: Les webapps produisent beaucoup de logs dans la console
+
+diff --git a/comm-esr60/modules/libpref/init/all.js b/comm-esr60/modules/libpref/init/all.js
+--- a/comm-esr60/modules/libpref/init/all.js
++++ b/comm-esr60/modules/libpref/init/all.js
+@@ -2947,7 +2947,7 @@
+ pref("layout.selection.caret_style", 0);
+ 
+ // pref to report CSS errors to the error console
+-pref("layout.css.report_errors", true);
++pref("layout.css.report_errors", false);
+ 
+ // Should the :visited selector ever match (otherwise :link matches instead)?
+ pref("layout.css.visited_links_enabled", true);

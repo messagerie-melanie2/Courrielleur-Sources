@@ -1,0 +1,21 @@
+# HG changeset patch
+# User Ludovic <>
+# Date 1582105640 -3600
+#      Wed Feb 19 10:47:20 2020 +0100
+# Node ID c1921cdaac724809d2f764dc5765935172e6b68f
+# Parent  224efc14994d1d6ed24924d52c97e8b9df3e5151
+0005568: Sous Linux le menu ? s'appelle Aide sur le Courrielleur et c'est un peu long
+
+diff --git a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+@@ -3,7 +3,8 @@
+    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+ 
+ <!-- Help Menu -->
+-<!ENTITY helpMenu.label "Aide sur le &brandShortName;">
++<!-- #5568 suppression de "sur le &brandShortName;" -->
++<!ENTITY helpMenu.label "Aide">
+ <!ENTITY helpMenu.accesskey "e">
+ <!-- LOCALIZATION NOTE some localizations of Windows use "?"
+                        for the help button in the menubar but Gnome does not.   -->

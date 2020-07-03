@@ -1,0 +1,22 @@
+# HG changeset patch
+# User pm
+# Date 1445874280 -3600
+#      Mon Oct 26 16:44:40 2015 +0100
+# Node ID d4ca6aca98c89350d58b9951019cf0bd847c0a8e
+# Parent  876ea25a4c2bf718a6649ebda99e3cf329ff8e4d
+Ticket mantis 0003986: changement de conf d'une BalI Pop vers Imap -> impossible de supprimer la bal Pop
+
+diff --git a/comm-esr60/comm/mailnews/base/prefs/content/AccountManager.js b/comm-esr60/comm/mailnews/base/prefs/content/AccountManager.js
+--- a/comm-esr60/comm/mailnews/base/prefs/content/AccountManager.js
++++ b/comm-esr60/comm/mailnews/base/prefs/content/AccountManager.js
+@@ -648,8 +648,8 @@
+ 
+     if (!accountName)
+       alertText = prefBundle.getString("accountNameEmpty");
+-    else if (accountNameExists(accountName, currentAccount.key))
+-      alertText = prefBundle.getString("accountNameExists");
++/*    else if (accountNameExists(accountName, currentAccount.key))
++      alertText = prefBundle.getString("accountNameExists");*/
+ 
+     if (alertText) {
+       const alertTitle = prefBundle.getString("accountWizard");

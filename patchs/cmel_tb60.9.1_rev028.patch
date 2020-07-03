@@ -1,0 +1,30 @@
+# HG changeset patch
+# User pm
+# Date 1526634234 -7200
+#      Fri May 18 11:03:54 2018 +0200
+# Node ID 7bc032d8edb476f106376f2d52fdc565e01eecb1
+# Parent  102d3ac234c902c62031c6eaaaf9b9e4d30d80aa
+Ticket mantis 0002967 : Supprimer le bouton Chat de la barre d'outil
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -800,15 +800,15 @@
+ pref("devtools.debugger.remote-enabled", true);
+ pref("devtools.selfxss.count", 5);
+ 
+-pref("mail.chat.enabled", true);
++pref("mail.chat.enabled", false);
+ // Whether to show chat notifications or not.
+-pref("mail.chat.show_desktop_notifications", true);
++pref("mail.chat.show_desktop_notifications", false);
+ // Decide how much information is to be shown in the notification.
+ // 0 == Show all info (sender, chat message message preview),
+ // 1 == Show sender's info only (not message preview),
+ // 2 == No info (fill dummy values).
+ pref("mail.chat.notification_info", 0);
+-pref("mail.chat.play_sound", true);
++pref("mail.chat.play_sound", false);
+ // 0 == default system sound, 1 == user specified wav
+ pref("mail.chat.play_sound.type", 0);
+ // if sound is user specified, this needs to be a file url

@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1527083158 -7200
+#      Wed May 23 15:45:58 2018 +0200
+# Node ID 810405fbb35c72ebd710aebac64e5333897c7a6e
+# Parent  dedba049278cf8ca993ab3d282d34b7af9e92689
+Ticket mantis 0004502: Pop up modifier etiquette ne s'affiche pas sur le meme ecran que courrielleur
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+@@ -955,7 +955,7 @@
+   var args = {result: "", okCallback: AddTagCallback};
+   var dialog = window.openDialog("chrome://messenger/content/newTagDialog.xul",
+                                  "",
+-                                 "chrome,titlebar,modal",
++                                 "chrome,titlebar,modal,centerscreen",
+                                  args);
+ }
+ 

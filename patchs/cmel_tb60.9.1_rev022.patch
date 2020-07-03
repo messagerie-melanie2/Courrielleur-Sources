@@ -1,0 +1,34 @@
+# HG changeset patch
+# User pm
+# Date 1526632157 -7200
+#      Fri May 18 10:29:17 2018 +0200
+# Node ID d4a664e73be0d16b7a7e94ef64427e4128c5f10e
+# Parent  5ccf9888ef044b35961dcff0a5791d11dc847203
+Ticket mantis 0003343: Integrer l'appel de l'assistant pacome dans le code source Thunderbird
+
+diff --git a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+--- a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
++++ b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+@@ -510,7 +510,8 @@
+ 
+   // verifyAccounts returns true if the callback won't be called
+   // We also don't want the account wizard to open if any sort of account exists
+-  if (verifyAccounts(LoadPostAccountWizard, false, AutoConfigWizard))
++  //if (verifyAccounts(LoadPostAccountWizard, false, AutoConfigWizard))
++  if (verifyAccounts(LoadPostAccountWizard, false, cm2ExecPacome))
+     LoadPostAccountWizard();
+ 
+   // Set up the summary frame manager to handle loading pages in the
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -3105,7 +3105,8 @@
+     SetupCommandUpdateHandlers();
+     // This will do migration, or create a new account if we need to.
+     // We also want to open the account wizard if no identities are found
+-    var state = verifyAccounts(WizCallback, true);
++    //var state = verifyAccounts(WizCallback, true);
++    var state = verifyAccounts(WizCallback, true, cm2ExecPacome);
+ 
+     if (other_headers) {
+       var selectNode = document.getElementById('addressCol1#1');

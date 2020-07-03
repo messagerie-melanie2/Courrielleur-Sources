@@ -1,0 +1,377 @@
+# HG changeset patch
+# User pm
+# Date 1530173285 -7200
+#      Thu Jun 28 10:08:05 2018 +0200
+# Node ID d6efebc6a74d04b2493b8ef0f92a8ea6e57b2067
+# Parent  ba51a4f90d78809cfa9f7e472c5781fa6a6bada1
+Modification de l'authentification pour melanie2 (version 2 - tb60)
+
+diff --git a/comm-esr60/toolkit/components/passwordmgr/nsLoginManager.js b/comm-esr60/toolkit/components/passwordmgr/nsLoginManager.js
+--- a/comm-esr60/toolkit/components/passwordmgr/nsLoginManager.js
++++ b/comm-esr60/toolkit/components/passwordmgr/nsLoginManager.js
+@@ -12,6 +12,8 @@
+ ChromeUtils.import("resource://gre/modules/Timer.jsm");
+ ChromeUtils.import("resource://gre/modules/LoginManagerContent.jsm");
+ 
++ChromeUtils.import("resource://gre/modules/pacomeAuthUtils.jsm");
++
+ ChromeUtils.defineModuleGetter(this, "BrowserUtils",
+                                "resource://gre/modules/BrowserUtils.jsm");
+ ChromeUtils.defineModuleGetter(this, "LoginHelper",
+@@ -301,6 +303,14 @@
+    */
+   addLogin(login) {
+     this._checkLogin(login);
++    
++    // cm2
++    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.hostname) ||
++        NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.formSubmitURL)){
++      log.debug("[nsLoginManager.js] addLogin melanie2");    
++      return;
++    }
++    // fin cm2    
+ 
+     // Look for an existing entry.
+     var logins = this.findLogins({}, login.hostname, login.formSubmitURL,
+@@ -352,6 +362,16 @@
+    */
+   removeLogin(login) {
+     log.debug("Removing login");
++    
++    // cm2
++    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.hostname) ||
++        NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.formSubmitURL)){
++      log.debug("[nsLoginManager.js] removeLogin melanie2");
++      PacomeAuthUtils.modifyMdpPacome(login.username, null);      
++      return;
++    }
++    // fin cm2
++
+     return this._storage.removeLogin(login);
+   },
+ 
+@@ -361,6 +381,16 @@
+    */
+   modifyLogin(oldLogin, newLogin) {
+     log.debug("Modifying login");
++    
++    // cm2
++    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(newLogin.hostname) ||
++        NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(newLogin.formSubmitURL)){
++      log.debug("[nsLoginManager.js] modifyLogin melanie2");
++      PacomeAuthUtils.modifyMdpPacome(newLogin.username, newLogin.password);      
++      return;
++    }
++    // fin cm2
++
+     return this._storage.modifyLogin(oldLogin, newLogin);
+   },
+ 
+@@ -382,6 +412,11 @@
+    */
+   removeAllLogins() {
+     log.debug("Removing all logins");
++    
++    // cm2
++    PacomeAuthUtils.removeAllLogins();
++    // fin cm2
++
+     this._storage.removeAllLogins();
+   },
+ 
+@@ -421,6 +456,14 @@
+     log.debug("Searching for logins matching origin:", origin,
+               "formActionOrigin:", formActionOrigin, "httpRealm:", httpRealm);
+ 
++    // cm2
++    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(origin) ||
++        NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(formActionOrigin)){
++      log.debug("[nsLoginManager.js] findLogins M2");
++      return PacomeAuthUtils.findLogins(count, origin, formActionOrigin, httpRealm);
++    }        
++    // fin cm2
++
+     return this._storage.findLogins(count, origin, formActionOrigin,
+                                     httpRealm);
+   },
+@@ -445,6 +488,22 @@
+         log.warn("searchLogins: `formSubmitURL` or `httpRealm` is recommended");
+       }
+     }
++    
++    // cm2
++    let hostname="";
++    let propEnum=matchData.enumerator;
++    while (propEnum.hasMoreElements()) {
++      let prop=propEnum.getNext().QueryInterface(Ci.nsIProperty);
++      switch (prop.name) {
++         case "hostname": hostname=prop.value;
++                        break;
++      }
++    }
++    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(hostname)) {
++      log.debug("[nsLoginManager.js] searchLogins M2");
++      return PacomeAuthUtils.searchLogins(count, matchData);
++    }
++    // fin cm2    
+ 
+     return this._storage.searchLogins(count, matchData);
+   },
+@@ -480,6 +539,13 @@
+     if (!this._remember) {
+       return false;
+     }
++    
++    // cm2
++    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(origin)){
++      log.debug("[nsLoginManager.js] getLoginSavingEnabled M2");
++      return false;
++    }
++    // fin cm2    
+ 
+     let uri = Services.io.newURI(origin);
+     return Services.perms.testPermission(uri, PERMISSION_SAVE_LOGINS) != Services.perms.DENY_ACTION;
+@@ -494,6 +560,14 @@
+     LoginHelper.checkHostnameValue(origin);
+ 
+     let uri = Services.io.newURI(origin);
++    
++    // cm2
++    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(origin)){
++      log.debug("[nsLoginManager.js] setLoginSavingEnabled M2");
++      Services.perms.add(uri, PERMISSION_SAVE_LOGINS, Services.perms.DENY_ACTION);
++    }
++    // fin cm2 
++    
+     if (enabled) {
+       Services.perms.remove(uri, PERMISSION_SAVE_LOGINS);
+     } else {
+diff --git a/comm-esr60/toolkit/components/passwordmgr/nsLoginManagerPrompter.js b/comm-esr60/toolkit/components/passwordmgr/nsLoginManagerPrompter.js
+--- a/comm-esr60/toolkit/components/passwordmgr/nsLoginManagerPrompter.js
++++ b/comm-esr60/toolkit/components/passwordmgr/nsLoginManagerPrompter.js
+@@ -5,6 +5,9 @@
+ ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+ ChromeUtils.import("resource://gre/modules/Services.jsm");
+ ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
++
++ChromeUtils.import("resource://gre/modules/pacomeAuthUtils.jsm");
++
+ const { PromptUtils } = ChromeUtils.import("resource://gre/modules/SharedPromptUtils.jsm", {});
+ 
+ ChromeUtils.defineModuleGetter(this, "LoginHelper",
+@@ -435,6 +438,27 @@
+ 
+     username = decodeURIComponent(username);
+ 
++    //mantis 3920
++    var srvm2=PacomeAuthUtils.TestServeurMelanie2(hostname);
++    if (MSG_MELANIE2==srvm2) {
++      this.log("[nsLoginManagerPrompter.js] promptPassword recherche pour uid="+username+" sur serveur melanie2:"+hostname);
++
++      let matchData=Cc["@mozilla.org/hash-property-bag;1"].createInstance(Ci.nsIWritablePropertyBag);
++      matchData.setProperty("pacome", "1");
++      matchData.setProperty("hostname", hostname);
++      matchData.setProperty("username", username);
++      var count={};
++      var logins=PacomeAuthUtils.searchLogins(count, matchData);
++      if (1==count.value) {
++        aPassword.value=logins[0].password;
++        this.log("===== promptPassword login ok");
++        return true;
++      }
++
++      this.log("[nsLoginManagerPrompter.js] promptPassword recherche => aucun");
++    }
++    //fin mantis 3920
++
+     // If hostname is null, we can't save this login.
+     if (hostname && !this._inPrivateBrowsing) {
+       var canRememberLogin = (aSavePassword ==
+@@ -463,10 +487,24 @@
+         }
+       }
+     }
++    
++    // cm2
++    var ok;
++    if (NON_MELANIE2!=srvm2) {
++      this.log("[nsLoginManagerPrompter.js] promptPassword demande de mot de passe melanie2");
++      
++      aPassword.value=hostname;
++      ok=PacomeAuthUtils.PromptMdp(this._window, username, aPassword);
++      checkBox.value=false;
++      
++    } else {
++ 
++      ok = this._promptService.promptPassword(this._window, aDialogTitle,
++                                                 aText, aPassword,
++                                                 checkBoxLabel, checkBox);
++    }
++    // fin cm2    
+ 
+-    var ok = Services.prompt.promptPassword(this._chromeWindow, aDialogTitle,
+-                                            aText, aPassword,
+-                                            checkBoxLabel, checkBox);
+ 
+     if (ok && checkBox.value && hostname && aPassword.value) {
+       var newLogin = Cc["@mozilla.org/login-manager/loginInfo;1"].
+@@ -533,6 +571,20 @@
+     var canAutologin = false;
+     var notifyObj;
+     var foundLogins;
++    
++    // mantis 3155
++    // authentification proxy AMANDE?
++    if (PacomeAuthUtils.isAuthProxyAmande(aChannel, aAuthInfo)){
++      this.log("[nsLoginManagerPrompter.js] nsLoginManagerPrompter.js promptAuth authentification proxy AMANDE");
++      return this.promptAuthM2(aChannel, aLevel, aAuthInfo);
++    }
++    // authentification melanie2
++    if (null!=aChannel && null!=aChannel.URI &&
++        APP_MELANIE2==PacomeAuthUtils.TestServeurMelanie2(aChannel.URI.host)) {
++      this.log("[nsLoginManagerPrompter.js] nsLoginManagerPrompter.js promptAuth authentification melanie2");
++      return this.promptAuthM2(aChannel, aLevel, aAuthInfo);    
++    }  
++    // fin mantis 3155
+ 
+     try {
+       this.log("===== promptAuth called =====");
+@@ -655,12 +707,94 @@
+ 
+     return ok;
+   },
++  
++  // authentification proxy AMANDE?
++  // authentification melanie2
++  promptAuthM2 : function (aChannel, aLevel, aAuthInfo) {
++    
++    //v3.4 - cas agenda : rechercher uid
++    let uid;
++    if (null!=aChannel && null!=aChannel.URI)
++      uid=PacomeAuthUtils.GetUidAgenda(aChannel.URI.spec);
++    let mdp=new Object();
++    this.log("[nsLoginManagerPrompter.js] promptAuthM2 GetUidAgenda uid:"+uid);
++    
++    if (null==uid || ""==uid) {
++      //authentification pacome avec le compte principal
++      this.log("[nsLoginManagerPrompter.js] promptAuthM2 authentification pacome avec le compte principal");
++      let compte=PacomeAuthUtils.GetComptePrincipal();
++      if (null==compte){
++        this.log("[nsLoginManagerPrompter.js] promptAuthM2 authentification "+aChannel.URI.host+" - pas de compte principal!");
++        return false;
++      }
++
++      uid=PacomeAuthUtils.GetUidReduit(compte.incomingServer.username);
++      
++      if (!(Ci.nsIAuthInformation.PREVIOUS_FAILED & aAuthInfo.flags)) {
++        mdp.value=compte.incomingServer.password;
++      }
++    }
++
++    if (null==mdp.value || ""==mdp.value) {
++      //demande mot de passe
++      this.log("[nsLoginManagerPrompter.js] promptAuthM2 authentification "+aChannel.URI.host+" - demande mot de passe");
++      let res=PacomeAuthUtils.PromptMdp(this._window, uid, mdp);
++      if (res!=1) {
++        this.log("[nsLoginManagerPrompter.js] promptAuthM2 authentification echec ou annulation promptPacome");
++        return false;
++      }
++    }
++
++    aAuthInfo.username=uid;
++    aAuthInfo.password=mdp.value;
++
++    return true;
++  },
++    
+ 
+   asyncPromptAuth(aChannel, aCallback, aContext, aLevel, aAuthInfo) {
+     var cancelable = null;
+ 
+     try {
+       this.log("===== asyncPromptAuth called =====");
++      
++      
++      //bug mantis 3155 - Pacome doit prendre en charge l'authentification des proxy du surf authentifié sur AMANDE
++      if (PacomeAuthUtils.isAuthProxyAmande(aChannel, aAuthInfo)){
++
++        this.log("[nsLoginManagerPrompter.js] asyncPromptAuth authentification proxy AMANDE");
++        this._removeLoginNotifications();
++        cancelable = this._newAsyncPromptConsumer(aCallback, aContext);
++
++        this.asyncPromptAuthPacome(aChannel, aCallback, aContext, aLevel, aAuthInfo);
++
++        return cancelable;
++      }
++      //fin bug mantis 3155    
++
++      // authentification etiquettes
++      if (aChannel instanceof Ci.nsIChannel &&
++          aAuthInfo instanceof Ci.nsIAuthInformation) {
++
++        var flags=aAuthInfo.flags;
++
++        if (Ci.nsIAuthInformation.AUTH_HOST & flags){
++                    
++          if ("cm2tags"==aAuthInfo.realm &&
++              PacomeAuthUtils.isMelanie2Host(aChannel.URI.host)){
++                
++            this.log("[nsLoginManagerPrompter.js] asyncPromptAuth authentification etiquettes host:"+aChannel.URI.host);
++            
++            this._removeLoginNotifications();
++            cancelable=this._newAsyncPromptConsumer(aCallback, aContext);
++
++            this.asyncPromptAuthPacome(aChannel, aCallback, aContext, aLevel, aAuthInfo);
++
++            return cancelable;
++          }
++        }
++      }
++      // fin authentification etiquettes         
+ 
+       // If the user submits a login but it fails, we need to remove the
+       // notification bar that was displayed. Conveniently, the user will
+@@ -703,6 +837,43 @@
+     return cancelable;
+   },
+ 
++  // mantis 3155 - modification pour le courrielleur - idem bugzilla 349641
++  asyncPromptAuthPacome : function capAPA(aChannel, aCallback, aContext, aLevel, aAuthInfo) {
++
++    this.log("[nsLoginManagerPrompter.js] asyncPromptAuthPacome");
++    var self=this;
++
++    let promptlistener={
++
++      onPromptStart : function() {
++
++        let res=self.promptAuth(aChannel, aLevel, aAuthInfo);
++ 
++        if (res) {
++          this.onPromptAuthAvailable();
++          return true;
++        }
++
++        this.onPromptCanceled();
++        return false;
++      },
++
++      onPromptAuthAvailable : function() {
++
++        aCallback.onAuthAvailable(aContext, aAuthInfo);
++      },
++
++      onPromptCanceled : function() {
++
++        aCallback.onAuthCancelled(aContext, true);
++      }
++    };
++
++    var asyncprompter=Components.classes["@mozilla.org/messenger/msgAsyncPrompter;1"]
++                      .getService(Components.interfaces.nsIMsgAsyncPrompter);
++    asyncprompter.queueAsyncAuthPrompt(aChannel.URI.spec, false, promptlistener);
++  },
++  //fin bug mantis 3155  
+ 
+ 
+ 

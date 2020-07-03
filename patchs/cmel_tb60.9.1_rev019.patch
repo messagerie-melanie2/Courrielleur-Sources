@@ -1,0 +1,19 @@
+# HG changeset patch
+# User pm
+# Date 1526630182 -7200
+#      Fri May 18 09:56:22 2018 +0200
+# Node ID 7774615d3464de5056b317dbc00514f58bcc5cd9
+# Parent  86c432d9e9c98654037b5ab3cf5a88e02a6b47c9
+Ticket mantis 0003083: bouton de Chat visible a l'ouverture d'un message
+
+diff --git a/comm-esr60/comm/mail/components/im/jar.mn b/comm-esr60/comm/mail/components/im/jar.mn
+--- a/comm-esr60/comm/mail/components/im/jar.mn
++++ b/comm-esr60/comm/mail/components/im/jar.mn
+@@ -4,6 +4,7 @@
+ 
+ messenger.jar:
+ % overlay chrome://messenger/content/messenger.xul chrome://messenger/content/chat/chat-messenger-overlay.xul
++% overlay chrome://messenger/content/mailWindowOverlay.xul chrome://messenger/content/chat/chat-messenger-overlay.xul
+ % style chrome://messenger/content/customizeToolbar.xul chrome://messenger/skin/chat.css
+ *   content/messenger/chat/chat-messenger-overlay.xul    (content/chat-messenger-overlay.xul)
+     content/messenger/chat/chat-messenger-overlay.js     (content/chat-messenger-overlay.js)

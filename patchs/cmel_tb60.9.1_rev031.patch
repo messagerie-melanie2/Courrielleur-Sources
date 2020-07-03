@@ -1,0 +1,28 @@
+# HG changeset patch
+# User pm
+# Date 1526636078 -7200
+#      Fri May 18 11:34:38 2018 +0200
+# Node ID 1fe66b35260a751f8596a246e0a904b044e71c0c
+# Parent  6ebdd3f03c25226053c0debed7fbe8d644399238
+Ticket mantis 0003002: Sur les nouveaux profils crees en v5 - le double-clic ne marque pas a lu
+
+diff --git a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+--- a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
++++ b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+@@ -1348,6 +1348,7 @@
+                                      "mail.openMessageBehavior.version");
+   if (!openMessageBehaviorVersion)
+   {
++  /* courrielleur v5 - bug mantis 0003002
+     let reuseMessageWindow;
+     try {
+       reuseMessageWindow = Services.prefs.getBoolPref(
+@@ -1362,7 +1363,7 @@
+     else if (reuseMessageWindow === false)
+       Services.prefs.setIntPref("mail.openMessageBehavior",
+           MailConsts.OpenMessageBehavior.NEW_TAB);
+-
++    */
+     Services.prefs.setIntPref("mail.openMessageBehavior.version", 1);
+   }
+ }

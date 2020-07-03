@@ -1,0 +1,107 @@
+# HG changeset patch
+# User pm
+# Date 1526632599 -7200
+#      Fri May 18 10:36:39 2018 +0200
+# Node ID 5833c3505061f322a946a9801b848d3d83f32bb5
+# Parent  a1e15a0aca4db13fdb68bbf7a47c3e5b3170f8c6
+Ticket mantis 0001266: Definition des choix par defaut de l'apparence + mantis 1641 et 1401
+
+diff --git a/comm-esr60/comm/mail/base/content/folderDisplay.js b/comm-esr60/comm/mail/base/content/folderDisplay.js
+--- a/comm-esr60/comm/mail/base/content/folderDisplay.js
++++ b/comm-esr60/comm/mail/base/content/folderDisplay.js
+@@ -418,15 +418,12 @@
+   DEFAULT_COLUMNS: [
+     "threadCol",
+     "attachmentCol",
+-    "flaggedCol",
+-    "subjectCol",
++    "tagsCol",
+     "unreadButtonColHeader",
+-    "senderCol", // news folders or incoming folders when correspondents not in use
+-    "recipientCol", // outgoing folders when correspondents not in use
+-    "correspondentCol", // mail folders
++    "senderCol",
++    "subjectCol",
+     "junkStatusCol",
+-    "dateCol",
+-    "locationCol", // multiple-folder backed folders
++    "dateCol"
+   ],
+ 
+   /**
+@@ -454,7 +451,7 @@
+         return viewWrapper.isNewsFolder || viewWrapper.isFeedFolder;
+       }
+       // senderCol = From. You only care in incoming folders.
+-      return viewWrapper.isIncomingFolder;
++      return viewWrapper.isMailFolder || viewWrapper.isNewsFolder || viewWrapper.isFeedFolder;
+     },
+     recipientCol: function (viewWrapper) {
+       if (Services.prefs.getBoolPref("mail.threadpane.use_correspondents")) {
+diff --git a/comm-esr60/comm/mail/base/content/messenger.xul b/comm-esr60/comm/mail/base/content/messenger.xul
+--- a/comm-esr60/comm/mail/base/content/messenger.xul
++++ b/comm-esr60/comm/mail/base/content/messenger.xul
+@@ -446,16 +446,12 @@
+                                  class="treecol-image threadColumnHeader" currentView="unthreaded"
+                                  label="&threadColumn.label;" tooltiptext="&threadColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="flaggedCol" fixed="true" cycler="true"
+-                                 class="treecol-image flagColumnHeader"
+-                                 label="&starredColumn.label;" tooltiptext="&starredColumn2.tooltip;"/>
+-                        <splitter class="tree-splitter"/>
+                         <treecol id="attachmentCol" fixed="true"
+                                  class="treecol-image attachmentColumnHeader"
+                                  label="&attachmentColumn.label;" tooltiptext="&attachmentColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="subjectCol" persist="width" flex="7" ignoreincolumnpicker="true"
+-                                 label="&subjectColumn.label;" tooltiptext="&subjectColumn2.tooltip;"/>
++                        <treecol id="tagsCol" persist="width" flex="1"
++                                 label="&tagsColumn.label;" tooltiptext="&tagsColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+                         <treecol id="unreadButtonColHeader" fixed="true" cycler="true"
+                                  class="treecol-image readColumnHeader"
+@@ -465,9 +461,8 @@
+                                  hidden="false" swappedhidden="true"
+                                  label="&fromColumn.label;" tooltiptext="&fromColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="recipientCol" persist="width" flex="4"
+-                                 hidden="true" swappedhidden="false"
+-                                 label="&recipientColumn.label;" tooltiptext="&recipientColumn2.tooltip;"/>
++                        <treecol id="subjectCol" persist="width" flex="7" ignoreincolumnpicker="true"
++                                 label="&subjectColumn.label;" tooltiptext="&subjectColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+                         <treecol id="correspondentCol" persist="width" flex="4" hidden="true"
+                                  label="&correspondentColumn.label;" tooltiptext="&correspondentColumn2.tooltip;"/>
+@@ -476,21 +471,26 @@
+                                  class="treecol-image junkStatusHeader"
+                                  label="&junkStatusColumn.label;" tooltiptext="&junkStatusColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
++                        <treecol id="dateCol" persist="width" flex="2"
++                                 label="&dateColumn.label;" tooltiptext="&dateColumn2.tooltip;"/>
++                        <splitter class="tree-splitter"/>
++                        <treecol id="flaggedCol" fixed="true" cycler="true" hidden="true"
++                                 class="treecol-image flagColumnHeader"
++                                 label="&starredColumn.label;" tooltiptext="&starredColumn2.tooltip;"/>
++                        <splitter class="tree-splitter"/>
++                        <treecol id="recipientCol" persist="width" flex="4"
++                                 hidden="true" swappedhidden="false"
++                                 label="&recipientColumn.label;" tooltiptext="&recipientColumn2.tooltip;"/>
++                        <splitter class="tree-splitter"/>
+                         <treecol id="receivedCol" persist="width temphidden" flex="2" hidden="true"
+                                  label="&receivedColumn.label;" tooltiptext="&receivedColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="dateCol" persist="width" flex="2"
+-                                 label="&dateColumn.label;" tooltiptext="&dateColumn2.tooltip;"/>
+-                        <splitter class="tree-splitter"/>
+                         <treecol id="statusCol" persist="width" flex="1" hidden="true"
+                                  label="&statusColumn.label;" tooltiptext="&statusColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+                         <treecol id="sizeCol" persist="width" flex="1" hidden="true"
+                                  label="&sizeColumn.label;" tooltiptext="&sizeColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="tagsCol" persist="width" flex="1" hidden="true"
+-                                 label="&tagsColumn.label;" tooltiptext="&tagsColumn2.tooltip;"/>
+-                        <splitter class="tree-splitter"/>
+                         <treecol id="accountCol" persist="width" flex="1" hidden="true"
+                                  label="&accountColumn.label;" tooltiptext="&accountColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>

@@ -1,0 +1,29 @@
+# HG changeset patch
+# User pm
+# Date 1526645674 -7200
+#      Fri May 18 14:14:34 2018 +0200
+# Node ID 24df9728c2729cabb9f650335bd4fe2f38816ef3
+# Parent  60fd18e0cd5243401e830f5bb2a9ac9f2538f577
+Ticket mantis 0002628: Calcul errone des nom et prenom lors de l'ajout d'un contact depuis un message
+
+diff --git a/comm-esr60/comm/mailnews/addrbook/src/nsAbAddressCollector.cpp b/comm-esr60/comm/mailnews/addrbook/src/nsAbAddressCollector.cpp
+--- a/comm-esr60/comm/mailnews/addrbook/src/nsAbAddressCollector.cpp
++++ b/comm-esr60/comm/mailnews/addrbook/src/nsAbAddressCollector.cpp
+@@ -230,6 +230,8 @@
+   if (NS_SUCCEEDED(aSenderCard->SetDisplayName(NS_ConvertUTF8toUTF16(aFullName))))
+     modifiedCard = true;
+ 
++  //cm2 - Bug mantis 0002628: Calcul errone des nom et prenom lors de l'ajout d'un contact depuis un message
++  /*
+   // Now split up the full name.
+   SplitFullName(nsCString(aFullName), firstName, lastName);
+ 
+@@ -240,7 +242,7 @@
+   if (!lastName.IsEmpty() &&
+       NS_SUCCEEDED(aSenderCard->SetLastName(NS_ConvertUTF8toUTF16(lastName))))
+     modifiedCard = true;
+-
++  */
+   if (modifiedCard)
+     aSenderCard->SetPropertyAsBool("PreferDisplayName", false);
+ 

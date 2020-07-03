@@ -1,0 +1,39 @@
+# HG changeset patch
+# User pm
+# Date 1546533426 -3600
+#      Thu Jan 03 17:37:06 2019 +0100
+# Node ID 096766fafbe7b587f25c5254c6c3a893bb5d7e9d
+# Parent  8681684821144c8bce63858d2cfc6a089b136d32
+Ticket mantis 0002118: Création de noms en français pour les dossiers 'Modèles' 'Brouillons' et 'Eléments envoyés' (correctif pour ticket 5129
+
+diff --git a/comm-esr60/comm/mailnews/local/src/nsLocalMailFolder.cpp b/comm-esr60/comm/mailnews/local/src/nsLocalMailFolder.cpp
+--- a/comm-esr60/comm/mailnews/local/src/nsLocalMailFolder.cpp
++++ b/comm-esr60/comm/mailnews/local/src/nsLocalMailFolder.cpp
+@@ -524,14 +524,20 @@
+   {
+     nsString folderName;
+     
+-    //cm2 - bug 2118
+-    nsCOMPtr <nsIFile> folderPath;
+-    rv = GetFilePath(getter_AddRefs(folderPath));
+-    if (NS_SUCCEEDED(rv)) {
+-      rv = folderPath->GetLeafName(folderName);
+-    } 
+-    if (NS_FAILED(rv)) 
++    // cm2 - mantis 2118
++    bool isServer;
++    rv = GetIsServer(&isServer);
++    if (!isServer && (mFlags & nsMsgFolderFlags::SpecialUse)) {
++      nsCOMPtr <nsIFile> folderPath;
++      rv = GetFilePath(getter_AddRefs(folderPath));
++      if (NS_SUCCEEDED(rv)) {
++        rv = folderPath->GetLeafName(folderName);
++      }       
++      if (NS_FAILED(rv)) 
++        GetName(folderName);
++    } else
+       GetName(folderName);
++
+     rv = msgParent->CreateSubfolder(folderName, nullptr);
+     // by definition, this is OK.
+     if (rv == NS_MSG_FOLDER_EXISTS)

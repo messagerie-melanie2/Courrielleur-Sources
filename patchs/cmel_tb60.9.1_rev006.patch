@@ -1,0 +1,21 @@
+# HG changeset patch
+# User pm
+# Date 1526567993 -7200
+#      Thu May 17 16:39:53 2018 +0200
+# Node ID 9c7f53ec4b8b24459bc414f2c8d10c26d2e1bc09
+# Parent  d2fb891c5fe49a65fc6f96f567a91f76dda4d469
+Ticket mantis 0001294: Le sujet d'un transfert est prefixe par Fwd: et non pas Tr:
+
+diff --git a/comm-esr60/comm/mailnews/mailnews.js b/comm-esr60/comm/mailnews/mailnews.js
+--- a/comm-esr60/comm/mailnews/mailnews.js
++++ b/comm-esr60/comm/mailnews/mailnews.js
+@@ -665,7 +665,8 @@
+ pref("mail.forward_message_mode", 0); // 0=default as attachment 2=forward as inline with attachments, (obsolete 4.x value)1=forward as quoted (mapped to 2 in mozilla)
+ pref("mail.forward_add_extension", true); // add .eml extension when forwarding as attachment
+ // Prefix of for mail forwards. E.g. "Fwd" -> subject will be Fwd: <subject>
+-pref("mail.forward_subject_prefix", "Fwd");
++//Bug mantis 0001294: Le sujet d'un transfert est prefixe par Fwd: et non pas Tr:
++pref("mail.forward_subject_prefix", "Tr");
+ 
+ pref("mail.startup.enabledMailCheckOnce", false);
+ 

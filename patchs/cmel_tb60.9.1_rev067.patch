@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1466168657 -7200
+#      Fri Jun 17 15:04:17 2016 +0200
+# Node ID 82d7c6a740a19b4bc0334df1dba0307408451116
+# Parent  1a6773deadffd175ff1bb5f8c90693b4ab10f9ff
+Ticket mantis 0004210: Depuis la v6 dans l'affichages des messages les adresses sont tronquees
+
+diff --git a/comm-esr60/comm/mail/themes/shared/mail/messageHeader.css b/comm-esr60/comm/mail/themes/shared/mail/messageHeader.css
+--- a/comm-esr60/comm/mail/themes/shared/mail/messageHeader.css
++++ b/comm-esr60/comm/mail/themes/shared/mail/messageHeader.css
+@@ -196,7 +196,7 @@
+ }
+ 
+ .emaillabel {
+-  max-width: 60vw; /* for very long email fields */
++  max-width:none !important;
+ }
+ 
+ .emaillabel,

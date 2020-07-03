@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1457964176 -3600
+#      Mon Mar 14 15:02:56 2016 +0100
+# Node ID 381e6b36627a8282ca148076baeb2b20bc056a3d
+# Parent  1b9e43c3d2d9fc06c78f5828dab1ba3d40cc7b18
+Ticket mantis 0003694 : Pliage de ligne
+
+diff --git a/comm-esr60/layout/style/res/html.css b/comm-esr60/layout/style/res/html.css
+--- a/comm-esr60/layout/style/res/html.css
++++ b/comm-esr60/layout/style/res/html.css
+@@ -253,7 +253,7 @@
+ xmp, pre, plaintext {
+   display: block;
+   font-family: -moz-fixed;
+-  white-space: pre;
++  white-space: pre-wrap;
+   margin-block-start: 1em;
+   margin-block-end: 1em;
+ }

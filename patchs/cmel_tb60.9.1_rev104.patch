@@ -1,0 +1,27 @@
+# HG changeset patch
+# User pm
+# Date 1540215691 -7200
+#      Mon Oct 22 15:41:31 2018 +0200
+# Node ID f53e01eccb657f5befef8c58c554e6157393e1f3
+# Parent  c91e9aae20ba35aa33ddf3e79354f3ca051c25fe
+Ticket mantis 0002982: Construire autrement le nom de l'identite d'expediteur dans la composition d'un message (complément pour identityName)
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -4248,9 +4248,14 @@
+ 
+     for (let i = 0; i < identities.length; i++) {
+       let identity = identities[i];
++      let uid=identity.identityName;
++      try {         
++        let pref="mail.identity."+identity.key+".identityName";
++        uid=Services.prefs.getCharPref(pref);          
++      } catch(ex) {} 
+       let item = menulist.appendItem(account.incomingServer.prettyName,
+                                      identity.fullAddress,
+-                                     identity.identityName);
++                                     uid);
+       item.setAttribute("identitykey", identity.key);
+       item.setAttribute("accountkey", account.key);
+       if (i == 0) {

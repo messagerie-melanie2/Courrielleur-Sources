@@ -1,0 +1,24 @@
+# HG changeset patch
+# User pm
+# Date 1526629982 -7200
+#      Fri May 18 09:53:02 2018 +0200
+# Node ID 86c432d9e9c98654037b5ab3cf5a88e02a6b47c9
+# Parent  d141f9f5121a5bde5d1d08c70ed3c7ba9e3473c2
+Ticket mantis 0003004: Notification de fichier volumineux lorsque la taille d'un fichier insere dans un message depasse la limite filelink
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -815,9 +815,9 @@
+ pref("mail.chat.play_sound.url", "");
+ 
+ // BigFiles
+-pref("mail.cloud_files.enabled", true);
+-pref("mail.cloud_files.inserted_urls.footer.link", "https://www.thunderbird.net");
+-pref("mail.cloud_files.learn_more_url", "https://support.thunderbird.net/kb/filelink-large-attachments");
++pref("mail.cloud_files.enabled", false);
++pref("mail.cloud_files.inserted_urls.footer.link", "");
++pref("mail.cloud_files.learn_more_url", "");
+ 
+ // Ignore threads
+ pref("mail.ignore_thread.learn_more_url", "https://support.thunderbird.net/kb/ignore-threads");

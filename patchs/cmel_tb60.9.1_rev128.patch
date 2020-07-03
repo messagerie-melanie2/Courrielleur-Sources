@@ -1,0 +1,14 @@
+# HG changeset patch
+# User pm
+# Date 1576054919 -3600
+#      Wed Dec 11 10:01:59 2019 +0100
+# Node ID 759d9992c6c013739b3e9e04aa56a117d7d4289e
+# Parent  077a015930189c90f04fa4ffa90b9d86407b94d2
+tag courrielleur version 8.5T2
+
+diff --git a/.hgtags b/.hgtags
+--- a/.hgtags
++++ b/.hgtags
+@@ -1,1 +1,2 @@
+ 27336b2dd124b0a235ba627bb51afaba17e74d39 8.0T1
++077a015930189c90f04fa4ffa90b9d86407b94d2 8.5T2

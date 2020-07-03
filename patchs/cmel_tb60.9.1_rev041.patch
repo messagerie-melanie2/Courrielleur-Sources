@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1526646177 -7200
+#      Fri May 18 14:22:57 2018 +0200
+# Node ID 9ac9e04a2d4f76897028646c4ca48dbcee05e26a
+# Parent  62c88ebccde38afc5551e43654b05bcf81e11ec3
+Ticket mantis 0004000 : URL proposée pour le ? (+ module courrielleur)
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -118,7 +118,7 @@
+      "https://www.mozilla.org/thunderbird/legal/privacy/#crash-reporter");
+ 
+ // Base URL for web-based support pages.
+-pref("app.support.baseURL", "https://support.thunderbird.net/%LOCALE%/%APP%/%APPBUILDID%/");
++pref("app.support.baseURL", "https://melanie2web.din.developpement-durable.gouv.fr/aide");
+ 
+ // Show error messages in error console.
+ pref("javascript.options.showInConsole", true);

@@ -1,0 +1,32 @@
+# HG changeset patch
+# User pm
+# Date 1550224232 -3600
+#      Fri Feb 15 10:50:32 2019 +0100
+# Node ID 8ecd200268ac5269f0a8e91702d5800d0e2d627a
+# Parent  f57ae0772d2c32241d137787590013584173cd57
+Ticke mantis 0005237: Changement des appellations Melanie2 (Thunderbird)
+
+diff --git a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+@@ -17,7 +17,7 @@
+ <!ENTITY releaseCmd2.accesskey "N">
+ <!ENTITY whatsNewCmd.label "Nouveautés">
+ <!ENTITY whatsNewCmd.accesskey "o">
+-<!ENTITY openHelp.label "Aide Mélanie2">
++<!ENTITY openHelp.label "Aide Mél">
+ <!ENTITY openHelp.accesskey "a">
+ <!ENTITY openHelp.commandkey "VK_F1">
+ <!ENTITY openHelpMac.label "Aide du &brandShortName;">
+diff --git a/fr-esr60/fr/mail/chrome/messenger/msgAccountCentral.dtd b/fr-esr60/fr/mail/chrome/messenger/msgAccountCentral.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/msgAccountCentral.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/msgAccountCentral.dtd
+@@ -2,7 +2,7 @@
+    - License, v. 2.0. If a copy of the MPL was not distributed with this
+    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+ 
+-<!ENTITY emailSectionHdr.label        "Courrier Mélanie2">
++<!ENTITY emailSectionHdr.label        "Courrier Mél">
+ <!ENTITY readMsgsLink.label           "Lire les messages">
+ <!ENTITY composeMsgLink.label         "Écrire un nouveau message">
+ 

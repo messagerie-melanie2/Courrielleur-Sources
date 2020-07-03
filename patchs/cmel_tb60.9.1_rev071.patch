@@ -1,0 +1,22 @@
+# HG changeset patch
+# User pm
+# Date 1469527254 -7200
+#      Tue Jul 26 12:00:54 2016 +0200
+# Node ID 264e6311dfa5af171eab613da7dc0ae2485fe98f
+# Parent  9cd1be3035e064f139549a9621536140e3f387e7
+Ticket mantis 0004268: L'extension 'Manually sort folders' ne permet pas le tri des dossier locaux comme le permettait 'Folderpane Tools'
+
+diff --git a/comm-esr60/comm/mailnews/base/util/folderUtils.jsm b/comm-esr60/comm/mailnews/base/util/folderUtils.jsm
+--- a/comm-esr60/comm/mailnews/base/util/folderUtils.jsm
++++ b/comm-esr60/comm/mailnews/base/util/folderUtils.jsm
+@@ -168,7 +168,9 @@
+     });
+   }
+ 
+-  return accountList.sort(compareAccounts);
++  //return accountList.sort(compareAccounts);
++  //Bug mantis 0004268: L'extension "Manually sort folders" ne permet pas le tri des dossier locaux comme le permettait "Folderpane Tools"
++  return accountList;
+ }
+ 
+ /**

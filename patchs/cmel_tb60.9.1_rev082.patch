@@ -1,0 +1,21 @@
+# HG changeset patch
+# User pm
+# Date 1495106227 -7200
+#      Thu May 18 13:17:07 2017 +0200
+# Node ID ec7a3b2329bffc6cdcbe4840d7a802119f684874
+# Parent  5486ca0c63ee2155b0f94a92af7301e0d06cd178
+Ticket mantis 0004554: Erreur 'aDocumentNode is undefined' lors de la modification d'un contact depuis les entetes
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWidgets.xml b/comm-esr60/comm/mail/base/content/mailWidgets.xml
+--- a/comm-esr60/comm/mail/base/content/mailWidgets.xml
++++ b/comm-esr60/comm/mail/base/content/mailWidgets.xml
+@@ -904,7 +904,8 @@
+           <![CDATA[
+             if (UpdateExtraAddressProcessing) {
+               var childNodes = this.emailAddresses.childNodes;
+-              for (let i = 0; i < this.mAddresses.length; i++) {
++              var maxi = childNodes.length/2;
++              for (let i = 0; i < maxi; i++) {
+                 UpdateExtraAddressProcessing(this.mAddresses[i],
+                                              childNodes[i * 2],
+                                              aParam1, aParam2, aParam3);

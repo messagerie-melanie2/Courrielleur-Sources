@@ -1,0 +1,23 @@
+# HG changeset patch
+# User pm
+# Date 1565096724 -7200
+#      Tue Aug 06 15:05:24 2019 +0200
+# Node ID 79a37d609bf197d180587256219f5f8d0b2824cb
+# Parent  84cd1ba708a47094a7d807fdd9e6fc9d8d9af6c1
+Ticket mantis 0005351: Le paramétrage du ticket 5321 perturbe le paramétrage des balp pour les nouveaux profils
+
+diff --git a/comm-esr60/comm/mail/base/content/folderPane.js b/comm-esr60/comm/mail/base/content/folderPane.js
+--- a/comm-esr60/comm/mail/base/content/folderPane.js
++++ b/comm-esr60/comm/mail/base/content/folderPane.js
+@@ -3149,8 +3149,10 @@
+       break;
+     }
+   }
+-  if (null==bp)
++  if (null==bp){
++    folder.server.performBiff(msgWindow);
+     return null;
++  }
+ 
+   if (!bp.hasSubFolders)
+     return null;

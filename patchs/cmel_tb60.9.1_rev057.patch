@@ -1,0 +1,83 @@
+# HG changeset patch
+# User pm
+# Date 1526655531 -7200
+#      Fri May 18 16:58:51 2018 +0200
+# Node ID 9c80562552dfa38128094646d3cd1a1d6b6d1885
+# Parent  f3c63bb7dca02486a067617372944fcd92ebf34f
+Signature des mises a jour (certificat et preferences) - ticket mantis 2841 - (majcm2.m2.e2.rie.gouv.fr)
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -69,11 +69,12 @@
+ // If these conditions aren't met it will be treated the same as when there is
+ // no update available.
+ 
+-pref("app.update.certs.1.issuerName", "CN=DigiCert SHA2 Secure Server CA,O=DigiCert Inc,C=US");
+-pref("app.update.certs.1.commonName", "aus5.mozilla.org");
++pref("app.update.certs.1.issuerName", "serialNumber=1,CN=Autorité de Certification Services Applicatifs,OU=0002 130003262,O=Agence Nationale des Titres Sécurisés,C=FR");
++pref("app.update.certs.1.commonName", "majcm2.m2.e2.rie.gouv.fr");
+ 
+-pref("app.update.certs.2.issuerName", "CN=thawte SSL CA - G2,O=\"thawte, Inc.\",C=US");
+-pref("app.update.certs.2.commonName", "aus5.mozilla.org");
++pref("app.update.certs.2.issuerName", "CN=AC Serveurs - Secteur public developpement durable,OU=0002 120066022,O=Secteur public developpement durable,C=FR");
++pref("app.update.certs.2.commonName", "majcm2.ida.melanie2.i2");
++
+ 
+ // Whether or not app updates are enabled
+ pref("app.update.enabled", true);
+@@ -95,10 +96,10 @@
+ 
+ // URL user can browse to manually if for some reason all update installation
+ // attempts fail.
+-pref("app.update.url.manual", "https://www.thunderbird.net");
++pref("app.update.url.manual", "http://courrielleur.s2.m2.e2.rie.gouv.fr/accueil.html");
+ // A default value for the "More information about this update" link
+ // supplied in the "An update is available" page of the update wizard.
+-pref("app.update.url.details", "https://www.thunderbird.net/%LOCALE%/%APP%/releases/");
++pref("app.update.url.details", "http://courrielleur.s2.m2.e2.rie.gouv.fr/accueil.html");
+ 
+ // app.update.promptWaitTime is in branding section
+ 
+diff --git a/comm-esr60/toolkit/modules/CertUtils.jsm b/comm-esr60/toolkit/modules/CertUtils.jsm
+--- a/comm-esr60/toolkit/modules/CertUtils.jsm
++++ b/comm-esr60/toolkit/modules/CertUtils.jsm
+@@ -40,7 +40,7 @@
+ 
+     let certAttrs = {};
+     for (let prefCertAttr of prefCertAttrs)
+-      certAttrs[prefCertAttr] = prefBranchCert.getCharPref(prefCertAttr);
++      certAttrs[prefCertAttr] = prefBranchCert.getComplexValue(prefCertAttr, Ci.nsISupportsString).data;
+ 
+     certs.push(certAttrs);
+     counter++;
+diff --git a/comm-esr60/toolkit/mozapps/update/updater/moz.build b/comm-esr60/toolkit/mozapps/update/updater/moz.build
+--- a/comm-esr60/toolkit/mozapps/update/updater/moz.build
++++ b/comm-esr60/toolkit/mozapps/update/updater/moz.build
+@@ -45,7 +45,7 @@
+ xpcshell_cert.script = 'gen_cert_header.py:create_header'
+ 
+ if CONFIG['MOZ_UPDATE_CHANNEL'] in ('beta', 'release', 'esr'):
+-    primary_cert.inputs += ['release_primary.der']
++    primary_cert.inputs += ['signcm2v5.der']
+     secondary_cert.inputs += ['release_secondary.der']
+ elif CONFIG['MOZ_UPDATE_CHANNEL'] in ('nightly', 'aurora', 'nightly-elm',
+                                       'nightly-profiling', 'nightly-oak',
+diff --git a/comm-esr60/toolkit/mozapps/update/updater/signcm2v5.der b/comm-esr60/toolkit/mozapps/update/updater/signcm2v5.der
+new file mode 100644
+index e69de29bb2d1d6434b8b29ae775ad8c2e48c5391..da5b99c8f9cb8ca9db0b98c5672c55beec6fe8bb
+GIT binary patch
+literal 683
+zc$_n6Vp?v{#3ZnQnTe5!iIrgvW2%M$FB_*;n@8JsUPeY1Rt5trLums^Hs(+kE@7eM
+z)S{ANz2sb@GE=?W#4I2KCdrIV(m+m}*U;F&%*f2Z(#XKnB1)Xs$PkHZ;Dq07WdlWs
+z*;1I2`o)>)dAW&222G4g$WCTtWngY%<Yxeib1^kBGBUhAHThr8r*~3Sp<-FzAF&qd
+z^=oE7zE^SN#GgZPQp!;mO*~c{i>xVk3G_~1SJ|p+@qF&f7PkAUiif`me{5t>DpC5=
+z<1e}FhlgMH%Cq;jJo)$1NquAP3bA#;UyjQ+`p@7Cd&}iH&!zFn-Q~CTK02)V_H6TA
+z$0H6tsz)}|-`nuRKGfvQp}SlUc&Fr?aOl|)5i@yN{2Pz!Tkd=+*;2CU-W~NTb$XgH
+z?q#<ZFSXz6VetQ##95`dH0MoxVzp8YKD(WQ#CM<ZY?8Ves8Ztd;9Ujpk!E*gFYQ0E
+zw>HmylXN5Rh@KDMrw1RdPx-zxb<(th)9ys@@BAocJhj8w^VFJG4q|H#WHK=`GB7UI
+zHPAK?WaCU|^I&ZI;RK9X7G@?E0Rv88_{s{iFc~lyaD$lqAaSM^v^2on*vQ~FBe?gM
+z)84LM3B2;RXJ;N2cyTCanzysT%a__rQXXeMr2O}YT{~;->h&}J*Qw@j-BRJ6`R3lT
+z$Ektwr?eKHb~tzZUD|ICZ3`D>L!PPxHpRsYZcf-1I9WLGg4f*eV2w@ee|TrUE8nxl
+e`Io?H^)tII_Fs5Y#L|^)>nqsX<eM!S(*yvLE(K!%
+

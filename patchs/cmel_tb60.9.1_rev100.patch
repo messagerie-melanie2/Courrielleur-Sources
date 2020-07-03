@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1538466891 -7200
+#      Tue Oct 02 09:54:51 2018 +0200
+# Node ID ee17c45ddd4d46f560eb73e431049a90922a5dbd
+# Parent  ad4649d0b1f2a41662967ede81d3bbac64a29a15
+Ticket mantis 0004959: La fonctionnalite 'nouveau message aux meme destinataires' ne reprend pas la signature (evolution ticket 4769)
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+@@ -3749,7 +3749,7 @@
+   
+   if (params) {
+     
+-    params.type=Components.interfaces.nsIMsgCompType.Template;
++    params.type=Components.interfaces.nsIMsgCompType.New;
+     params.format=Components.interfaces.nsIMsgCompFormat.Default;
+     params.identity=getIdentityForHeader(msghdr);
+         

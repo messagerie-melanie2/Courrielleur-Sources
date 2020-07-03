@@ -1,0 +1,429 @@
+# HG changeset patch
+# User pm
+# Date 1527079706 -7200
+#      Wed May 23 14:48:26 2018 +0200
+# Node ID 81479bf3f416693b9358e2f81aaed27bfa219f74
+# Parent  1d9fbd476a1fba88bc23d6a113930c613c58653b
+Affichage de l'arborescence des dossiers courrier
+
+diff --git a/comm-esr60/comm/mail/base/content/folderPane.js b/comm-esr60/comm/mail/base/content/folderPane.js
+--- a/comm-esr60/comm/mail/base/content/folderPane.js
++++ b/comm-esr60/comm/mail/base/content/folderPane.js
+@@ -707,6 +707,13 @@
+     else if (types.includes("text/x-moz-folder")) {
+       if (aOrientation != Ci.nsITreeView.DROP_ON)
+         return false;
++      //cm2 - affichage des boites partagees
++      //cm2 - pas de deplacement a la racine des boites partagees
++      if (targetFolder.isServer &&
++          cm2IsRacineBalp(targetFolder.rootFolder) ) {
++         return false;
++      }
++      //fin cm2
+       // If cannot create subfolders then don't allow drop here.
+       if (!targetFolder.canCreateSubfolders)
+         return false;
+@@ -1163,6 +1170,13 @@
+       if (foldersWithFlag.length > 0) {
+         for (let folderWithFlag of fixIterator(foldersWithFlag,
+                                                Ci.nsIMsgFolder)) {
++          //cm2 - affichage des boites partagees
++          if (nsMsgFolderFlags.Inbox==aFolderFlag &&
++              ("INBOX"==folderWithFlag.name || "Courrier entrant"==folderWithFlag.name)
++              && cm2IsRacineBalp(folderWithFlag.parent)) {
++            continue;
++          }
++          //fin cm2
+           folders.push(folderWithFlag);
+           // Add sub-folders of Sent and Archive to the result.
+           if (deep && (aFolderFlag & (nsMsgFolderFlags.SentMail | nsMsgFolderFlags.Archive)))
+@@ -1281,6 +1295,30 @@
+         newFolder = parentFolder.createLocalSubfolder(newName);
+       else
+         newFolder = parentFolder.addSubfolder(newName);
++      //cm2 - affichage des boites partagees
++      let libelle="";
++      if (nsMsgFolderFlags.Inbox & folderFlag){
++        libelle=document.getElementById("bundle_messenger").getString("inboxFolderName");
++      } else if (nsMsgFolderFlags.Drafts & folderFlag){
++        libelle=document.getElementById("bundle_messenger").getString("draftsFolderName");
++      } else if (nsMsgFolderFlags.SentMail&folderFlag){
++        libelle=document.getElementById("bundle_messenger").getString("sentFolderName");
++      } else if (nsMsgFolderFlags.Trash & folderFlag){
++        libelle=document.getElementById("bundle_messenger").getString("trashFolderName");
++      } else if (nsMsgFolderFlags.Templates & folderFlag){
++        libelle=document.getElementById("bundle_messenger").getString("templatesFolderName");
++      } else if (nsMsgFolderFlags.Archive & folderFlag){
++        libelle=document.getElementById("bundle_messenger").getString("archivesFolderName");
++      } else if (nsMsgFolderFlags.Junk & folderFlag){
++        libelle=document.getElementById("bundle_messenger").getString("junkFolderName");
++      } else if (nsMsgFolderFlags.Queue & folderFlag){
++        libelle=document.getElementById("bundle_messenger").getString("outboxFolderName");
++      }
++      if (""!=libelle) {
++        newFolder.prettyName=libelle;
++        newFolder.setFlag(folderFlag);
++      }
++      //fin cm2
+       newFolder.setFlag(nsMsgFolderFlags.Virtual);
+       // provide a way to make the top level folder just a container, not
+       // a search folder
+@@ -1545,6 +1583,17 @@
+         MailUtils.discoverFolders();
+ 
+         return accounts.map(acct => new ftvItem(acct.incomingServer.rootFolder));
++      },
++      
++      handleChangedIntProperty: function(aItem, aProperty, aOld, aNew) {
++        // We want to rebuild only if we have a newly unread folder
++        // and we didn't already have the folder.
++        if ("FolderFlag"==aProperty && "imap"==aItem.server.type &&
++            aItem.isSpecialFolder(nsMsgFolderFlags.SpecialUse)) {
++          gFolderTreeView._rebuild();
++          return true;
++        }
++        return false;
+       }
+     },
+ 
+@@ -2152,15 +2201,36 @@
+   },
+   addFolder: function ftl_add_folder(aParentItem, aItem)
+   {
++    //cm2 - affichage des boites partagees
++    let itemParent=aParentItem;
++
++    if (cm2IsFolderBalp(aItem)){
++      if (cm2IsEntrantBalp(aItem)){
++        //sous dossier  Boite partagee/<partage> -> inserer sous racine
++        itemParent=aParentItem.parent;
++      } else if (cm2IsDossierBoitePartage(aItem)) {
++        //dossier Boite partagee -> ne pas inserer
++        return;
++      } else if (aParentItem && cm2IsEntrantBalp(aParentItem)) {
++        //sous-dossier courrier entrant -> sur racine
++        itemParent=aParentItem.parent.parent;
++      } else if (aParentItem && null==aParentItem.parent &&
++                 ("INBOX"==aItem.name || "Courrier entrant"==aItem.name)) {
++        return;
++      }
++    }
++    //fin cm2
++
+     // This intentionally adds any new folder even if it would not pass the
+     // _filterFunction. The idea is that the user can add new folders even
+     // in modes like "unread" or "favorite" and could wonder why they
+     // are not appearing (forgetting they do not meet the criteria of the view).
+     // The folders will be hidden properly next time the view is rebuilt.
+-    let parentIndex = this.getIndexOfFolder(aParentItem);
+-    let parent = this._rowMap[parentIndex];
++    let parentIndex=this.getIndexOfFolder(itemParent);
++    let parent=this._rowMap[parentIndex];
++
+     if (!parent)
+-       return;
++      return;
+ 
+     // Getting these children might have triggered our parent to build its
+     // array just now, in which case the added item will already exist
+@@ -2316,12 +2386,16 @@
+         let text;
+         if (this.useServerNameOnly)
+           text = this._folder.server.prettyName;
+-        else {
+-          text = this._folder.abbreviatedName;
+-          if (this.addServerName) {
+-            text = gFolderTreeView.messengerBundle.getFormattedString(
+-              "folderWithAccount", [text, this._folder.server.prettyName]);
++        else {    
++          //cm2 - affichage des boites partagees
++          if (cm2IsEntrantBalp(this._folder) && !this.useServerNameOnly){
++            text="Courrier entrant";
++          } else {
++            text = this._folder.abbreviatedName;
++            if (this.addServerName)
++              text += " - " + this._folder.server.prettyName;
+           }
++          //fin cm2
+         }
+ 
+         // In a simple list tree we don't care for attributes other than folder name.
+@@ -2428,31 +2502,101 @@
+   get children() {
+     // We're caching our child list to save perf.
+     if (!this._children) {
+-      let iter;
+-      try {
+-        iter = fixIterator(this._folder.subFolders, Ci.nsIMsgFolder);
+-      } catch (ex) {
+-        Services.console.logStringMessage("Discovering children for " + this._folder.URI +
+-                                          " failed with " + "exception: " + ex);
+-        iter = [];
++      //cm2 - affichage des boites partagees
++      if (cm2IsEntrantBalp(this._folder)){
++        //pas de sous-dossier affiche
++        if (null==this._children)
++          this._children=[ ];
++        return this._children;
+       }
+-      this._children = [];
+-      // Out of all children, only keep those that match the _folderFilter
+-      // and those that contain such children.
+-      for (let folder of iter) {
+-        if (!this._folderFilter || this._folderFilter(folder)) {
+-          this._children.push(new ftvItem(folder, this._folderFilter));
++      if (cm2IsRacineBalp(this._folder)){
++        this.construitFilsRacine();
++      } else {
++        let iter;
++        try {
++          iter = fixIterator(this._folder.subFolders, Ci.nsIMsgFolder);
++        } catch (ex) {
++          Services.console.logStringMessage("Discovering children for " + this._folder.URI +
++                                            " failed with " + "exception: " + ex);
++          iter = [];
+         }
+-      }
+-      sortFolderItems(this._children);
+-      // Each child is a level one below us
+-      for (let child of this._children) {
+-        child._level = this._level + 1;
+-        child._parent = this;
++        this._children = [];
++        // Out of all children, only keep those that match the _folderFilter
++        // and those that contain such children.
++        for (let folder of iter) {
++          if (!this._folderFilter || this._folderFilter(folder)) {
++            this._children.push(new ftvItem(folder, this._folderFilter));
++          }
++        }
++        //fin cm2
++        sortFolderItems(this._children);
++        // Each child is a level one below us
++        for (let child of this._children) {
++          child._level = this._level + 1;
++          child._parent = this;
++        }
+       }
+     }
+     return this._children;
+-  }
++  },
++  
++  //construit la liste des fils de la racine d'une balp
++  //reconstruire une arborescence similaire a bali
++  //this._folder.URI -> EXP_RACINE_BALP
++  //listage des fils de imap://<uid>.-.<partage>@<serveur>/FP_NOM_BOITEPARTAGE/<partage> -> dossiers fils
++  //imap://<uid>.-.<partage>@<serveur>/FP_NOM_BOITEPARTAGE/<partage> -> courrier entrant
++  //imap://<uid>.-.<partage>@<serveur>/Corbeille -> corbeille (voir pref draft_folder)
++  //cas Archive : imap://<uid>.-.<partage>@<serveur>/NOM_BOITEPARTAGE/<partage>/Archives ?
++  construitFilsRacine : function() {
++
++    if (null!=this._children) {
++      return;
++    }
++
++    this._children=[ ];
++
++    if (!cm2IsRacineBalp(this._folder)){
++      return;
++    }
++    
++    //dossier courrier entrant
++    var entrant=cm2GetEntrantBalp(this._folder);
++    if (null==entrant){
++      Services.console.logStringMessage("folderPane.js construitFilsRacine null==entrant");
++      return;
++    }
++    this._children.push(new ftvItem(entrant));
++    //sous-dossiers de entrant
++    var iter=fixIterator(entrant.subFolders, Components.interfaces.nsIMsgFolder);
++    for (let f of iter){
++      //this._children.push(new ftvItem(f));
++      if (!this._folderFilter || this._folderFilter(f)) {
++        this._children.push(new ftvItem(f, this._folderFilter));
++      }
++    }
++
++    //dossiers corbeille
++    var corbeille=null;
++    iter=fixIterator(this._folder.subFolders, Components.interfaces.nsIMsgFolder);
++    for (let f of iter){
++      if ("Corbeille"==f.name) {
++        corbeille=f;
++        break;
++      }
++    }
++    if (null!=corbeille){
++      this._children.push(new ftvItem(corbeille));
++    } else {
++      Services.console.logStringMessage("folderPane.js construitFilsRacine null==corbeille");
++    }
++
++    sortFolderItems(this._children);
++    // Each child is a level one below us
++    for (let child of this._children) {
++      child._level = this._level + 1;
++      child._parent = this;
++    }
++   }  
+ };
+ 
+ /**
+@@ -2484,6 +2628,17 @@
+       dualUseFolders = folder.server.dualUseFolders;
+ 
+     function newFolderCallback(aName, aFolder) {
++
++      //cm2 - affichage des boites partagees
++      if (aName && cm2IsRacineBalp(aFolder)) {
++        let dosin=cm2GetEntrantBalp(aFolder);
++        if (null==dosin)
++          return;
++        dosin.createSubfolder(aName, msgWindow);
++        return;
++      }
++      //fin cm2
++
+       // createSubfolder can throw an exception, causing the newFolder dialog
+       // to not close and wait for another input.
+       // TODO: Rewrite this logic and also move the opening of alert dialogs from
+@@ -2845,10 +3000,21 @@
+ 
+     // We're caching our child list to save perf.
+     if (!this._children) {
++      //cm2 - affichage des boites partagees
++      let dossier=this._folder;
++      if (cm2IsRacineBalp(this._folder)){
++        dossier=cm2GetEntrantBalp(this._folder);
++      }      
+       this._children = [];
+-      let iter = fixIterator(this._folder.subFolders, Ci.nsIMsgFolder);
++      let iter = fixIterator(dossier.subFolders, Ci.nsIMsgFolder);
++      //fin cm2
+       for (let folder of iter) {
+         if (!smartMode.isSmartFolder(folder)) {
++          //cm2 - affichage des boites partagees
++          if (cm2IsDossierBoitePartage(folder) ||
++              (("INBOX"==folder.name || "Courrier entrant"==folder.name) && cm2IsRacineBalp(folder.parent)))
++            continue;
++          //fin cm2          
+           this._children.push(new ftv_SmartItem(folder));
+         }
+         else if (folder.flags & nsMsgFolderFlags.Inbox) {
+@@ -2906,6 +3072,115 @@
+   gFolderTreeView.setFolderCacheProperty(aFolder, "smartFolderName", aName);
+ }
+ 
++
++//cm2 - affichage des boites partagees
++/*
++* fonctions utilitaires
++*/
++const FP_LIB_BOITEPARTAGE="Boite partag\u00e9e";
++
++
++//return true si folder est un dossier racine de boite partagee
++function cm2IsRacineBalp(folder) {
++  
++  if (!folder.isServer)
++    return false;
++
++  var confid=folder.server.getCharValue("pacome.confid");
++  if (null==confid || "par1"!=confid)
++    return false;
++
++  return true;
++};
++
++//return true si folder est un dossier de boite partagee
++function cm2IsFolderBalp(folder) {
++
++  var confid=folder.server.getCharValue("pacome.confid");
++
++  if (null==confid || "par1"!=confid)
++    return false;
++
++  return true;
++};
++
++//return true si folder est le dossier courrier entrant de boite partagee
++function cm2IsEntrantBalp(folder) {
++  
++  if (!cm2IsFolderBalp(folder))
++    return false;
++
++  if (folder.isServer)
++    return false;
++
++  if (folder.parent.isServer)
++    return false;
++
++  if (!folder.parent.parent.isServer)
++    return false;
++
++  if (FP_LIB_BOITEPARTAGE!=folder.parent.name)
++    return false;
++
++  //valider courrier entrant balp
++  var username=folder.username;
++  if (username) {
++    var parts=username.split(".-.");
++    if (2==parts.length &&
++        folder.name==parts[1]){
++      return true;
++    }
++  }
++
++  return false;
++};
++
++//retrouve le dossier courrier entrant d'une racine de boite partagee
++function cm2GetEntrantBalp(folder) {
++  
++  if (!cm2IsRacineBalp(folder))
++    return null;
++
++  var bp=null
++  let iter=fixIterator(folder.subFolders, Components.interfaces.nsIMsgFolder);
++  for (let f of iter){
++    if (cm2IsDossierBoitePartage(f)){
++      bp=f;
++      break;
++    }
++  }
++  if (null==bp)
++    return null;
++
++  if (!bp.hasSubFolders)
++    return null;
++
++  iter=fixIterator(bp.subFolders, Components.interfaces.nsIMsgFolder);
++  for (let f of iter){
++    if (cm2IsEntrantBalp(f))
++      return f;
++  }
++
++  return null;
++};
++
++//return true si folder est un dossier "Boite partagee"
++function cm2IsDossierBoitePartage(folder) {
++  
++  if (folder.isServer)
++    return false;
++  if (!folder.parent.isServer)
++    return false;
++
++  if (!cm2IsFolderBalp(folder))
++    return false;
++
++  if (FP_LIB_BOITEPARTAGE==folder.name)
++    return true;
++
++  return false;
++};
++//fin cm2v3
+ var gFolderStatsHelpers = {
+     kUnknownSize: "-",
+     sumSubfoldersPref: false,

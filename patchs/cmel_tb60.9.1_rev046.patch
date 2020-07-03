@@ -1,0 +1,24 @@
+# HG changeset patch
+# User pm
+# Date 1450876503 -3600
+#      Wed Dec 23 14:15:03 2015 +0100
+# Node ID de79fa8fb224adc721f6c74a9a44ab5f7dc3d123
+# Parent  292e70012c863003664af971630e83c06209831a
+Ticket mantis 0003787: Dans l'autocompletion, les noms ne s'affichent pas depuis le debut (NOM Prenom)
+
+diff --git a/comm-esr60/toolkit/content/widgets/autocomplete.xml b/comm-esr60/toolkit/content/widgets/autocomplete.xml
+--- a/comm-esr60/toolkit/content/widgets/autocomplete.xml
++++ b/comm-esr60/toolkit/content/widgets/autocomplete.xml
+@@ -217,7 +217,11 @@
+         <parameter name="aStartIndex"/>
+         <parameter name="aEndIndex"/>
+         <body><![CDATA[
+-          this.inputField.setSelectionRange(aStartIndex, aEndIndex);
++           if (aStartIndex==aEndIndex && 
++            this.textValue.length==aStartIndex)
++            this.inputField.setSelectionRange(0, 0);
++          else
++            this.inputField.setSelectionRange(aStartIndex, aEndIndex);
+         ]]></body>
+       </method>
+ 

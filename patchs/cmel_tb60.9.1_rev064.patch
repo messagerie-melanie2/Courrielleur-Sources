@@ -1,0 +1,30 @@
+# HG changeset patch
+# User pm
+# Date 1460387058 -7200
+#      Mon Apr 11 17:04:18 2016 +0200
+# Node ID e849d5b4e6f27040cb7afb281cde919b51c655a5
+# Parent  81479bf3f416693b9358e2f81aaed27bfa219f74
+Ticket mantis 0004047: Probleme d'ouverture de lien pegase depuis un message en fenetre (specifique tb45)
+
+diff --git a/comm-esr60/comm/mail/base/content/contentAreaClick.js b/comm-esr60/comm/mail/base/content/contentAreaClick.js
+--- a/comm-esr60/comm/mail/base/content/contentAreaClick.js
++++ b/comm-esr60/comm/mail/base/content/contentAreaClick.js
+@@ -160,6 +160,18 @@
+     //fin bug mantis 0003269
+     return true;
+   }
++  
++  //Bug mantis 0004047
++  if (0==href.indexOf("https://pegase.din.developpement-durable.gouv.fr/")){
++    var topWindow=Services.wm.getMostRecentWindow("mail:3pane");
++    if (topWindow){
++      aEvent.preventDefault();
++      topWindow.webtabs.openWebAppPegase(href);
++      
++      return true;
++    }
++  }
++  //fin Bug mantis 0004047
+ 
+   // Now we're here, we know this should be loaded in an external browser, so
+   // prevent the default action so we don't try and load it here.

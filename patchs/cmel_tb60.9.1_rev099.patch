@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1538142959 -7200
+#      Fri Sep 28 15:55:59 2018 +0200
+# Node ID ad4649d0b1f2a41662967ede81d3bbac64a29a15
+# Parent  4319591bfd79674d57940296655657e627e78bfe
+gAbView is null
+
+diff --git a/comm-esr60/comm/mailnews/addrbook/content/abResultsPane.js b/comm-esr60/comm/mailnews/addrbook/content/abResultsPane.js
+--- a/comm-esr60/comm/mailnews/addrbook/content/abResultsPane.js
++++ b/comm-esr60/comm/mailnews/addrbook/content/abResultsPane.js
+@@ -39,7 +39,7 @@
+ {
+   // If we don't have a URI, just clear the view and leave everything else
+   // alone.
+-  if (!aURI) {
++  if (!aURI && gAbView) {
+     gAbView.clearView();
+     return;
+   }

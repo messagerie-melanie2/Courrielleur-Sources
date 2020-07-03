@@ -1,0 +1,40 @@
+# HG changeset patch
+# User pm
+# Date 1577786403 -3600
+#      Tue Dec 31 11:00:03 2019 +0100
+# Node ID b82bc16f21c93b4c759200df6849af2ac22ee79c
+# Parent  265255bd0ee022fb3980556168792cd1f964eca7
+Ticket mantis 0005507: Adapter et intégrer le patch imap bugzilla 216308 dans tb60.9.1 (cmel 8.5)
+
+diff --git a/comm-esr60/comm/mailnews/imap/src/nsImapService.cpp b/comm-esr60/comm/mailnews/imap/src/nsImapService.cpp
+--- a/comm-esr60/comm/mailnews/imap/src/nsImapService.cpp
++++ b/comm-esr60/comm/mailnews/imap/src/nsImapService.cpp
+@@ -2687,6 +2687,17 @@
+ 
+   bool externalLinkUrl;
+   imapUrl->GetExternalLinkUrl(&externalLinkUrl);
++
++  // Only external imap links with no action are supported. Ignore links that
++  // attempt to cause an effect such as fetching a mime part. This avoids
++  // spurious prompts to subscribe to folders due to "imap://...Fetch..." links
++  // residing in legacy emails residing in an imap mailbox.
++  if (externalLinkUrl) {
++    nsImapAction imapAction;
++    imapUrl->GetImapAction(&imapAction);
++    if (imapAction != 0) externalLinkUrl = false;
++  }
++
+   if (externalLinkUrl)
+   {
+     // everything after here is to handle clicking on an external link. We only want
+diff --git a/comm-esr60/comm/mailnews/imap/src/nsImapUrl.cpp b/comm-esr60/comm/mailnews/imap/src/nsImapUrl.cpp
+--- a/comm-esr60/comm/mailnews/imap/src/nsImapUrl.cpp
++++ b/comm-esr60/comm/mailnews/imap/src/nsImapUrl.cpp
+@@ -58,6 +58,7 @@
+   m_flags = 0;
+   m_extraStatus = ImapStatusNone;
+   m_onlineSubDirSeparator = '/';
++  m_imapAction = 0;
+ 
+   // ** jt - the following are not ref counted
+   m_copyState = nullptr;

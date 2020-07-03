@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1457712269 -3600
+#      Fri Mar 11 17:04:29 2016 +0100
+# Node ID 292e70012c863003664af971630e83c06209831a
+# Parent  462de500079df225425151e17ba94416cf361e65
+Ticket mantis 0004055: Comportement de l'auto-completion sur les carnets d'adresses locaux
+
+diff --git a/comm-esr60/comm/mailnews/mailnews.js b/comm-esr60/comm/mailnews/mailnews.js
+--- a/comm-esr60/comm/mailnews/mailnews.js
++++ b/comm-esr60/comm/mailnews/mailnews.js
+@@ -197,7 +197,7 @@
+ // * SM: Recipient Autocomplete (composition, mailing list properties dialogue)
+ //
+ // mail.addr_book.autocompletequery.format will be used if mail.addr_book.show_phonetic_fields is "false"
+-pref("mail.addr_book.autocompletequery.format", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V)))");
++pref("mail.addr_book.autocompletequery.format", "(or(DisplayName,bw,@V)(FirstName,bw,@V)(LastName,bw,@V)(NickName,bw,@V)(PrimaryEmail,bw,@V)(SecondEmail,bw,@V)(ThirdEmail,bw,@V)(and(IsMailList,=,TRUE)(Notes,bw,@V)))");
+ // mail.addr_book.autocompletequery.format.phonetic will be used if mail.addr_book.show_phonetic_fields is "true"
+ pref("mail.addr_book.autocompletequery.format.phonetic", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V))(PhoneticFirstName,c,@V)(PhoneticLastName,c,@V))");
+ 

@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1526571919 -7200
+#      Thu May 17 17:45:19 2018 +0200
+# Node ID 2fbf37df724a966fa835ad63977d11d93b8d2eaa
+# Parent  cea3344a9bdc2c083945b3fca77219107b66a85e
+Ticket mantis 0002825 - Barre de menu par defaut
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -843,7 +843,7 @@
+ 
+ // If set to true, Thunderbird will collapse the main menu for new profiles
+ // (or, more precisely, profiles that start with no accounts created).
+-pref("mail.main_menu.collapse_by_default", true);
++pref("mail.main_menu.collapse_by_default", false);
+ 
+ // If set to true, when saving a message to a file, use underscore
+ // instead of space in the file name.

@@ -1,0 +1,68 @@
+# HG changeset patch
+# User pm
+# Date 1363862594 -3600
+#      Thu Mar 21 11:43:14 2013 +0100
+# Node ID 41289488f5b1125fad9fd27951af873908a75309
+# Parent  9c80562552dfa38128094646d3cd1a1d6b6d1885
+Ticket mantis 0001924: Ne pas mettre en avant le bouton repondre a tous
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+@@ -1346,7 +1346,9 @@
+     if (gFolderDisplay.selectedMessageIsFeed)
+       replyToSenderButton.hidden = true;
+     else if (smartReplyButton)
+-      replyToSenderButton.hidden = (buttonToShow == "reply");
++      //Bug mantis 0001924: Ne pas mettre en avant le bouton repondre a tous
++      //replyToSenderButton.hidden = (buttonToShow == "reply");
++      replyToSenderButton.hidden = (buttonToShow == "reply" || "replyAll" == buttonToShow);
+     else
+       replyToSenderButton.hidden = false;
+   }
+diff --git a/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.xul b/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.xul
+--- a/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.xul
++++ b/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.xul
+@@ -269,28 +269,30 @@
+                                oncommand="MsgReplySender(event);RestoreFocusAfterHdrButton();"
+                                observes="button_reply"
+                                class="toolbarbutton-1 msgHeaderView-button hdrReplyButton"/>
++                <!-- Bug mantis 0001924: Ne pas mettre en avant le bouton repondre a tous -->
+                 <toolbarbutton id="hdrReplyAllButton"
+-                               label="&hdrReplyAllButton1.label;"
+-                               tooltiptext="&hdrReplyAllButton1.tooltip;"
+-                               oncommand="MsgReplyToAllMessage(event);RestoreFocusAfterHdrButton();"
++                               label="&hdrReplyButton1.label;"
++                               tooltiptext="&hdrReplyButton2.tooltip;"
++                               oncommand="MsgReplySender(event); RestoreFocusAfterHdrButton();"
+                                observes="button_replyall"
+-                               class="toolbarbutton-1 msgHeaderView-button hdrReplyButton hdrReplyAllButton"
++                               class="toolbarbutton-1 msgHeaderView-button hdrReplyButton"
+                                type="menu-button"
+                                hidden="true">
+-                  <menupopup id="hdrReplyAllDropdown">
++                  <menupopup id="hdrReplyAllDropdown">                   
++                    <menuitem id="hdrReplySubButton"
++                              label="&hdrReplyButton1.label;"
++                              tooltiptext="&hdrReplyButton2.tooltip;"
++                              observes="button_reply"/>
++                    <menuseparator id="hdrReplyAllSubSeparator"/>
+                     <menuitem id="hdrReplyAll_ReplyAllSubButton"
+                               label="&hdrReplyAllButton1.label;"
+                               tooltiptext="&hdrReplyAllButton1.tooltip;"
++                              oncommand="MsgReplyToAllMessage(event); event.stopPropagation();
++                                          RestoreFocusAfterHdrButton();"
+                               observes="button_replyall"/>
+-                    <menuseparator id="hdrReplyAllSubSeparator"/>
+-                    <menuitem id="hdrReplySubButton"
+-                              label="&hdrReplyButton1.label;"
+-                              tooltiptext="&hdrReplyButton2.tooltip;"
+-                              observes="button_reply"
+-                              oncommand="MsgReplySender(event); event.stopPropagation();
+-                                         RestoreFocusAfterHdrButton();"/>
+                   </menupopup>
+                 </toolbarbutton>
++                <!-- fin Bug mantis 0001924 -->
+                 <toolbarbutton id="hdrReplyListButton"
+                                label="&hdrReplyListButton1.label;"
+                                tooltiptext="&hdrReplyListButton1.tooltip;"

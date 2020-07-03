@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1495108429 -7200
+#      Thu May 18 13:53:49 2017 +0200
+# Node ID 328729ed256a3d8ef8a51f884c03a86a1f2a432d
+# Parent  ec7a3b2329bffc6cdcbe4840d7a802119f684874
+Ticket mantis 0004557: Carnets en lecture seule listes depuis les entetes
+
+diff --git a/comm-esr60/comm/mail/base/content/editContactOverlay.xul b/comm-esr60/comm/mail/base/content/editContactOverlay.xul
+--- a/comm-esr60/comm/mail/base/content/editContactOverlay.xul
++++ b/comm-esr60/comm/mail/base/content/editContactOverlay.xul
+@@ -68,7 +68,7 @@
+                    accesskey="&editContactAddressBook.accesskey;"
+                    control="editContactAddressBookList"/>
+             <menulist id="editContactAddressBookList" flex="1">
+-              <menupopup id="editContactAddressBookList-menupopup"
++              <menupopup id="editContactAddressBookList-menupopup" writable="true"
+                          class="addrbooksPopup"/>
+             </menulist>
+           </row>

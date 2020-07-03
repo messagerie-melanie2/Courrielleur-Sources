@@ -1,0 +1,149 @@
+# HG changeset patch
+# User pm
+# Date 1526567838 -7200
+#      Thu May 17 16:37:18 2018 +0200
+# Node ID d2fb891c5fe49a65fc6f96f567a91f76dda4d469
+# Parent  631126dfd1bae0be143fc74697d32c09ea433e97
+Ticket mantis 0002499: Reflexions autour du nom complet
+
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCard.inc b/comm-esr60/comm/mail/components/addrbook/content/abCard.inc
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCard.inc
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCard.inc
+@@ -29,7 +29,26 @@
+                  those fields are either LN or FN depends on the target country.
+                  They are configurable in the .dtd file.
+               -->
++            <!-- Bug mantis 0002499: Reflexions autour du nom complet -->
++            <hbox id="NameField2Container" align="center">
++              <spacer flex="1"/>
++              <label control="&NameField2.id;" value="&NameField2.label;"
++                     accesskey="&NameField2.accesskey;"/>
++              <hbox class="CardEditWidth" align="center">
++                <textbox id="&NameField2.id;" flex="1"
++                         oninput="GenerateDisplayName()"/>
+ 
++                <!-- LOCALIZATION NOTE:
++                     Fields for phonetic are disabled as default and can be
++                     enabled by editing "mail.addr_book.show_phonetic_fields"
++                  -->
++
++                <spacer id="PhoneticSpacer2" flex="1" hidden="true"/>
++                <label id="PhoneticLabel2" control="&PhoneticField2.id;"
++                       value="&PhoneticField2.label;" hidden="true"/>
++                <textbox id="&PhoneticField2.id;" flex="1" hidden="true"/>
++              </hbox>
++            </hbox>
+             <hbox id="NameField1Container" align="center">
+               <spacer flex="1"/>
+               <label control="&NameField1.id;" value="&NameField1.label;"
+@@ -49,34 +68,15 @@
+                 <textbox id="&PhoneticField1.id;" flex="1" hidden="true"/>
+               </hbox>
+             </hbox>
+-            <hbox id="NameField2Container" align="center">
+-              <spacer flex="1"/>
+-              <label control="&NameField2.id;" value="&NameField2.label;"
+-                     accesskey="&NameField2.accesskey;"/>
+-              <hbox class="CardEditWidth" align="center">
+-                <textbox id="&NameField2.id;" flex="1"
+-                         oninput="GenerateDisplayName()"/>
+-
+-                <!-- LOCALIZATION NOTE:
+-                     Fields for phonetic are disabled as default and can be
+-                     enabled by editing "mail.addr_book.show_phonetic_fields"
+-                  -->
+-
+-                <spacer id="PhoneticSpacer2" flex="1" hidden="true"/>
+-                <label id="PhoneticLabel2" control="&PhoneticField2.id;"
+-                       value="&PhoneticField2.label;" hidden="true"/>
+-                <textbox id="&PhoneticField2.id;" flex="1" hidden="true"/>
+-              </hbox>
+-            </hbox>
+             <hbox id="DisplayNameContainer" align="center">
+               <spacer flex="1"/>
+               <label control="DisplayName" value="&DisplayName.label;"
+                      accesskey="&DisplayName.accesskey;" />
+               <hbox class="CardEditWidth">
+-                <textbox id="DisplayName" flex="1"
+-                         oninput="DisplayNameChanged()"/>
++                <textbox id="DisplayName" flex="1" readonly="true"/>
+               </hbox>
+             </hbox>
++            <!-- fin Bug mantis 0002499 -->
+             <hbox id="PreferDisplayNameContainer" align="center">
+               <spacer flex="1"/>
+               <hbox class="CardEditWidth">
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCard.js b/comm-esr60/comm/mail/components/addrbook/content/abCard.js
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCard.js
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCard.js
+@@ -123,7 +123,8 @@
+       // a display name (and stomp on the existing display name)
+       // when the user types a first or last name
+       if (gEditCard.card.displayName)
+-        gEditCard.generateDisplayName = false;
++        //cm2 - Bug mantis 0002499: Reflexions autour du nom complet
++        gEditCard.generateDisplayName = true;
+     }
+     if ("aimScreenName" in window.arguments[0])
+       gEditCard.card.setProperty("_AimScreenName",
+@@ -274,7 +275,8 @@
+        gEditCard.card.lastName.length +
+        gEditCard.card.displayName.length > 0))
+   {
+-    gEditCard.generateDisplayName = false;
++    //cm2 - Bug mantis 0002499: Reflexions autour du nom complet
++    gEditCard.generateDisplayName = true;
+   }
+ 
+   GetCardValues(gEditCard.card, document);
+@@ -665,11 +667,9 @@
+   // filled in: email address, first name, last name, display name,
+   //            organization (company name).
+   var primaryEmail = doc.getElementById("PrimaryEmail");
+-  if (primaryEmail.textLength == 0 &&
+-    doc.getElementById("FirstName").textLength == 0 &&
+-    doc.getElementById("LastName").textLength == 0 &&
+-    doc.getElementById("DisplayName").textLength == 0 &&
+-    doc.getElementById("Company").textLength == 0)
++  //cm2 - Bug mantis 0002499: Reflexions autour du nom complet
++  if (doc.getElementById("LastName").textLength == 0)
++  //fin cm2 - Bug mantis 0002499
+   {
+     Services.prompt.alert(
+       window,
+diff --git a/fr-esr60/fr/mail/chrome/messenger/addressbook/addressBook.properties b/fr-esr60/fr/mail/chrome/messenger/addressbook/addressBook.properties
+--- a/fr-esr60/fr/mail/chrome/messenger/addressbook/addressBook.properties
++++ b/fr-esr60/fr/mail/chrome/messenger/addressbook/addressBook.properties
+@@ -6,7 +6,8 @@
+ # LOCALIZATION NOTE (mailingListTitleEdit): %S will be replaced by the Mailing List's display name.
+ mailingListTitleEdit=Modifier %S
+ emptyListName=Vous devez saisir un nom de liste.
+-lastFirstFormat=%S, %S
++# Bug mantis 0002499: Reflexions autour du nom complet
++lastFirstFormat=%S %S
+ firstLastFormat=%S %S
+ 
+ allAddressBooks=Tous les carnets d’adresses
+@@ -23,7 +24,8 @@
+ editVCardTitleWithDisplayName=Modifier la vCard de %S
+ 
+ ## LOCALIZATION NOTE (cardRequiredDataMissingMessage):  do not localize \n
+-cardRequiredDataMissingMessage=Vous devez saisir au moins un des éléments suivants :\nl’adresse électronique, le prénom, le nom, le nom à afficher ou la société.
++# Bug mantis 0002499: Reflexions autour du nom complet
++cardRequiredDataMissingMessage=Vous devez saisir au moins le nom.
+ cardRequiredDataMissingTitle=Informations requises manquantes
+ incorrectEmailAddressFormatMessage=L’adresse électronique principale doit être de la forme utilisateur@domaine.
+ incorrectEmailAddressFormatTitle=Format d’adresse électronique incorrect
+diff --git a/fr-esr60/fr/mail/chrome/messenger/messenger.properties b/fr-esr60/fr/mail/chrome/messenger/messenger.properties
+--- a/fr-esr60/fr/mail/chrome/messenger/messenger.properties
++++ b/fr-esr60/fr/mail/chrome/messenger/messenger.properties
+@@ -271,7 +271,8 @@
+ # whether to generate display names in last first order
+ # LOCALIZATION NOTE(mail.addr_book.displayName.lastnamefirst):
+ # the only valid values are: true OR false (choose from the untranslated English words)
+-mail.addr_book.displayName.lastnamefirst=false
++#cm2 - Bug mantis 0002499: Reflexions autour du nom complet
++mail.addr_book.displayName.lastnamefirst=true
+ 
+ # whether to also show phonetic fields in the addressbook
+ # LOCALIZATION NOTE(mail.addr_book.show_phonetic_fields):

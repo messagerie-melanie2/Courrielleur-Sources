@@ -1,0 +1,26 @@
+# HG changeset patch
+# User pm
+# Date 1526635997 -7200
+#      Fri May 18 11:33:17 2018 +0200
+# Node ID 6ebdd3f03c25226053c0debed7fbe8d644399238
+# Parent  593aec05ed4c5a59e004d453643760a9fac4d0a2
+Ticket mantis 0003495 : TB31 : dysfonctionnements avec la preference 'capability.policy.localfilelinks.sites'
+
+diff --git a/comm-esr60/comm/mail/base/content/nsContextMenu.js b/comm-esr60/comm/mail/base/content/nsContextMenu.js
+--- a/comm-esr60/comm/mail/base/content/nsContextMenu.js
++++ b/comm-esr60/comm/mail/base/content/nsContextMenu.js
+@@ -638,6 +638,14 @@
+    *         permission to link to the URL, false if not
+    */
+   isLinkSaveable : function CM_isLinkSaveable() {
++  
++    //Bug mantis 0003495 : TB31 : dysfonctionnements avec la preference 'capability.policy.localfilelinks.sites'
++    if (this.linkURI.schemeIs("file") &&
++        (this.target.nodePrincipal.origin.match(/imap:\/\/amelie.*\.melanie2\.i2:993/) ||
++         this.target.nodePrincipal.origin.match(/mailbox:\/\/\//)) ){
++      return true;
++    }
++  
+     try {
+       const nsIScriptSecurityManager =
+         Ci.nsIScriptSecurityManager;

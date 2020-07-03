@@ -1,0 +1,21 @@
+# HG changeset patch
+# User pm
+# Date 1526646077 -7200
+#      Fri May 18 14:21:17 2018 +0200
+# Node ID 62c88ebccde38afc5551e43654b05bcf81e11ec3
+# Parent  946937fa6b8c54c1fa1f5b3d26bdc2b2ebb51c0a
+Ticket mantis 0003845: Possibilite de creer differents comptes au niveau de la page d'accueil d'un compte de messagerie
+
+diff --git a/comm-esr60/comm/mailnews/base/content/msgAccountCentral.js b/comm-esr60/comm/mailnews/base/content/msgAccountCentral.js
+--- a/comm-esr60/comm/mailnews/base/content/msgAccountCentral.js
++++ b/comm-esr60/comm/mailnews/base/content/msgAccountCentral.js
+@@ -286,7 +286,8 @@
+ function CreateNewAccountTB(type)
+ {
+   if (type == "mail") {
+-    AddMailAccount();
++    //mantis 0003845: Possibilite de creer differents comptes au niveau de la page d'accueil d'un compte de messagerie
++    window.openDialog('chrome://pacome/content/pacomecompte.xul','','chrome,modal,centerscreen,titlebar,resizable=no');
+     return;
+   }
+ 

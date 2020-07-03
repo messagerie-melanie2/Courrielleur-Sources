@@ -1,0 +1,161 @@
+# HG changeset patch
+# User pm
+# Date 1553521288 -3600
+#      Mon Mar 25 14:41:28 2019 +0100
+# Node ID 178d92437c11a074ba0cea141b31e6e77a301bb2
+# Parent  87f1e9da6f6d35f91f9af6deaf519ebbf037948c
+Ticket mantis 0005109: Remplacement de la date d'emission d'un message par sa date de reception sur Melanie2
+
+diff --git a/comm-esr60/comm/mail/base/content/folderDisplay.js b/comm-esr60/comm/mail/base/content/folderDisplay.js
+--- a/comm-esr60/comm/mail/base/content/folderDisplay.js
++++ b/comm-esr60/comm/mail/base/content/folderDisplay.js
+@@ -422,8 +422,9 @@
+     "unreadButtonColHeader",
+     "senderCol",
+     "subjectCol",
+-    "junkStatusCol",
+-    "dateCol"
++    "receivedCol",
++    "sizeCol",
++    "flaggedCol"
+   ],
+ 
+   /**
+@@ -469,6 +470,18 @@
+     junkStatusCol: function(viewWrapper) {
+       return !viewWrapper.isNewsFolder;
+     },
++
++    receivedCol: function (viewWrapper) {
++      return viewWrapper.isMailFolder || viewWrapper.isNewsFolder || viewWrapper.isFeedFolder;
++    },
++
++    sizeCol: function (viewWrapper) {
++      return viewWrapper.isMailFolder || viewWrapper.isNewsFolder || viewWrapper.isFeedFolder;
++    },
++
++    flaggedCol: function (viewWrapper) {
++      return viewWrapper.isMailFolder || viewWrapper.isNewsFolder || viewWrapper.isFeedFolder;
++    },
+   },
+ 
+   /**
+@@ -606,7 +619,9 @@
+         }
+       }
+       state[colId] = {visible: shouldShowColumn};
++
+     }
++
+     return state;
+   },
+ 
+diff --git a/comm-esr60/comm/mail/base/content/messenger.xul b/comm-esr60/comm/mail/base/content/messenger.xul
+--- a/comm-esr60/comm/mail/base/content/messenger.xul
++++ b/comm-esr60/comm/mail/base/content/messenger.xul
+@@ -466,30 +466,30 @@
+                         <treecol id="correspondentCol" persist="width" flex="4" hidden="true"
+                                  label="&correspondentColumn.label;" tooltiptext="&correspondentColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="junkStatusCol" persist="width" fixed="true" cycler="true"
++                        <treecol id="junkStatusCol" persist="width" fixed="true" cycler="true" hidden="true"
+                                  class="treecol-image junkStatusHeader"
+                                  label="&junkStatusColumn.label;" tooltiptext="&junkStatusColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="dateCol" persist="width" flex="2"
++                        <treecol id="dateCol" persist="width" flex="2" hidden="true"
+                                  label="&dateColumn.label;" tooltiptext="&dateColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="flaggedCol" fixed="true" cycler="true" hidden="true"
+-                                 class="treecol-image flagColumnHeader"
+-                                 label="&starredColumn.label;" tooltiptext="&starredColumn2.tooltip;"/>
+-                        <splitter class="tree-splitter"/>
+                         <treecol id="recipientCol" persist="width" flex="4"
+                                  hidden="true" swappedhidden="false"
+                                  label="&recipientColumn.label;" tooltiptext="&recipientColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="receivedCol" persist="width temphidden" flex="2" hidden="true"
++                        <treecol id="receivedCol" persist="width" flex="2"
+                                  label="&receivedColumn.label;" tooltiptext="&receivedColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+                         <treecol id="statusCol" persist="width" flex="1" hidden="true"
+                                  label="&statusColumn.label;" tooltiptext="&statusColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="sizeCol" persist="width" flex="1" hidden="true"
++                        <treecol id="sizeCol" persist="width" flex="1"
+                                  label="&sizeColumn.label;" tooltiptext="&sizeColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
++                        <treecol id="flaggedCol" fixed="true" cycler="true"
++                                 class="treecol-image flagColumnHeader"
++                                 label="&starredColumn.label;" tooltiptext="&starredColumn2.tooltip;"/>
++                        <splitter class="tree-splitter"/>
+                         <treecol id="accountCol" persist="width" flex="1" hidden="true"
+                                  label="&accountColumn.label;" tooltiptext="&accountColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+diff --git a/comm-esr60/comm/mailnews/db/gloda/modules/dbview.js b/comm-esr60/comm/mailnews/db/gloda/modules/dbview.js
+--- a/comm-esr60/comm/mailnews/db/gloda/modules/dbview.js
++++ b/comm-esr60/comm/mailnews/db/gloda/modules/dbview.js
+@@ -111,22 +111,28 @@
+     threadCol: {
+       visible: true,
+     },
+-    flaggedCol: {
++    attachmentCol: {
++      visible: true,
++    },
++    tagsCol: {
++      visible: true,
++    },
++    unreadButtonColHeader: {
++      visible: true,
++    },
++    senderCol: {
+       visible: true,
+     },
+     subjectCol: {
+       visible: true,
+     },
+-    correspondentCol: {
+-      visible: Services.prefs.getBoolPref("mail.threadpane.use_correspondents"),
+-    },
+-    senderCol: {
+-      visible: !Services.prefs.getBoolPref("mail.threadpane.use_correspondents"),
+-    },
+-    dateCol: {
++    receivedCol: {
+       visible: true,
+     },
+-    locationCol: {
++    sizeCol: {
++      visible: true,
++    },
++    flaggedCol: {
+       visible: true,
+     },
+   },
+diff --git a/comm-esr60/comm/mailnews/imap/src/nsImapProtocol.cpp b/comm-esr60/comm/mailnews/imap/src/nsImapProtocol.cpp
+--- a/comm-esr60/comm/mailnews/imap/src/nsImapProtocol.cpp
++++ b/comm-esr60/comm/mailnews/imap/src/nsImapProtocol.cpp
+@@ -88,7 +88,7 @@
+ #define OUTPUT_BUFFER_SIZE (4096*2) // mscott - i should be able to remove this if I can use nsMsgLineBuffer???
+ 
+ #define IMAP_ENV_HEADERS "From To Cc Bcc Subject Date Message-ID "
+-#define IMAP_DB_HEADERS "Priority X-Priority References Newsgroups In-Reply-To Content-Type Reply-To"
++#define IMAP_DB_HEADERS "Priority X-Priority References Newsgroups In-Reply-To Content-Type Reply-To Received"
+ #define IMAP_ENV_AND_DB_HEADERS IMAP_ENV_HEADERS IMAP_DB_HEADERS
+ static const PRIntervalTime kImapSleepTime = PR_MillisecondsToInterval(60000);
+ static int32_t gPromoteNoopToCheckCount = 0;
+diff --git a/comm-esr60/comm/mailnews/mailnews.js b/comm-esr60/comm/mailnews/mailnews.js
+--- a/comm-esr60/comm/mailnews/mailnews.js
++++ b/comm-esr60/comm/mailnews/mailnews.js
+@@ -59,8 +59,8 @@
+ //   as defined in nsIMsgDBView.idl (ascending = 1, descending = 2)
+ // sort_type is an int value reflecting nsMsgViewSortType values
+ //   as defined in nsIMsgDBView.idl (byDate = 18, byId = 21 etc.)
+-pref("mailnews.default_sort_order", 1); // for Mail/RSS/... (nsMsgDatabase)
+-pref("mailnews.default_sort_type", 18); //
++pref("mailnews.default_sort_order", 2); // for Mail/RSS/... (nsMsgDatabase)
++pref("mailnews.default_sort_type", 35); //
+ pref("mailnews.default_news_sort_order", 1); // for News (nsNewsDatabase)
+ pref("mailnews.default_news_sort_type", 21); //
+ 

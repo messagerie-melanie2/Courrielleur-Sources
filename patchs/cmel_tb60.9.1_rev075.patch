@@ -1,0 +1,34 @@
+# HG changeset patch
+# User pm
+# Date 1474878216 -7200
+#      Mon Sep 26 10:23:36 2016 +0200
+# Node ID 7cb1667da5ff59dd9b1aad40643a38dc0419b627
+# Parent  98c19dc27613ea5fb5be77b760caf1402954b610
+Ticket mantis 0004362: L’auto completion et la recherche rapide dans les carnets d'adresses ne marche pas avec les noms du type 'LE BUANEC'
+
+diff --git a/comm-esr60/comm/mailnews/base/util/ABQueryUtils.jsm b/comm-esr60/comm/mailnews/base/util/ABQueryUtils.jsm
+--- a/comm-esr60/comm/mailnews/base/util/ABQueryUtils.jsm
++++ b/comm-esr60/comm/mailnews/base/util/ABQueryUtils.jsm
+@@ -24,7 +24,12 @@
+   let searchString = aSearchString.trim();
+   if (searchString == "")
+     return [];
+-
++  
++  // mantis 4362
++  let searchWords = [aSearchString];
++  return searchWords;
++  // fin mantis 4362
++/*
+   let quotedTerms = [];
+ 
+   // Split up multiple search words to create a *foo* and *bar* search against
+@@ -51,7 +56,7 @@
+     searchWords = quotedTerms;
+   }
+ 
+-  return searchWords;
++  return searchWords;*/
+ }
+ 
+ /**

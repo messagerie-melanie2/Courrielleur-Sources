@@ -1,0 +1,48 @@
+# HG changeset patch
+# User pm
+# Date 1527081993 -7200
+#      Wed May 23 15:26:33 2018 +0200
+# Node ID 8bf7fa0e9fc084e7a28a856433f4fba1b2c6da24
+# Parent  7552f294515855d47c98012292841ea16d670ed2
+Ticket mantis 0004319 : Regressions dans la recherche des mots clef indiquant une pj
+
+diff --git a/comm-esr60/comm/mail/base/modules/attachmentChecker.js b/comm-esr60/comm/mail/base/modules/attachmentChecker.js
+--- a/comm-esr60/comm/mail/base/modules/attachmentChecker.js
++++ b/comm-esr60/comm/mail/base/modules/attachmentChecker.js
+@@ -75,15 +75,20 @@
+       }
+     }
+     else {
+-      var start = IsCJK(kw.charCodeAt(0)) ? "" : ("((^|\\s)\\S*)");
++      //modifié par Bug mantis 0004319: Régressions dans la recherche des mots clef indiquant une pj
++      var start = IsCJK(kw.charCodeAt(0)) ? "" : ("((^|\\s*)\\S*)");
+       var end = IsCJK(kw.charCodeAt(kw.length - 1)) ? "" : "(" + NOT_W + "|$)";
+       var re = new RegExp(start + kw + end, "ig");
+       var matching;
+       while ((matching = re.exec(mailData)) !== null) {
+         // Ignore the match if it was in a URL.
+-        if (!(/^(https?|ftp):\/\//i.test(matching[0].trim()))) {
+-          keywordsFound.push(keywordsArray[i]);
+-          break;
++        if (!(/^(https?|ftp):\/\//i.test(matching[0].trim()))) {          
++          if (0==(matching[0].trim()).indexOf(kw)){
++            keywordsFound.push(keywordsArray[i]);
++            break;
++          } else {
++            continue;
++          }
+         }
+       }
+     }
+diff --git a/fr-esr60/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties b/fr-esr60/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties
+--- a/fr-esr60/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties
++++ b/fr-esr60/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties
+@@ -292,7 +292,7 @@
+ ## Attachment Reminder
+ ## LOCALIZATION NOTE (mail.compose.attachment_reminder_keywords): comma separated
+ ## words that should trigger an attachment reminder.
+-mail.compose.attachment_reminder_keywords=pièce jointe,joins,joint,joints,jointe,jointes,.doc,.pdf,CV,lettre de motivation,attaché,attachée,attachées,attachés
++mail.compose.attachment_reminder_keywords=pièce jointe,joins,joint,joints,jointe,jointes,ci-joint,ci-joints,ci-jointe,ci-jointes,.doc,.pdf,CV,lettre de motivation,attaché,attachée,attachées,attachés
+ 
+ addAttachmentButton=Ajouter une pièce jointe…
+ addAttachmentButton.accesskey=A

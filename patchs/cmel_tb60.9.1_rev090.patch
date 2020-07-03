@@ -1,0 +1,120 @@
+# HG changeset patch
+# User pm
+# Date 1520589906 -3600
+#      Fri Mar 09 11:05:06 2018 +0100
+# Node ID 5d4d090f29601d4ac6aa458742719e151ff4c21c
+# Parent  62e78070c6b2a175d49b9a3152d4ed5b9e818831
+Ticket 0004780: Abandon du carnet 'Adresses personnelles' pour les nouveaux profils (partie thunderbird - voir module contacts)
+
+diff --git a/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.js b/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.js
+--- a/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.js
++++ b/comm-esr60/comm/mail/base/content/msgHdrViewOverlay.js
+@@ -1577,8 +1577,18 @@
+   // leaving something else there).
+   emailAddressNode.setAttribute("updatingUI", true);
+ 
+-  const kPersonalAddressbookURI = "moz-abmdbdirectory://abook.mab";
+-  let addressBook = MailServices.ab.getDirectory(kPersonalAddressbookURI);
++  // mantis 4780
++  //const kPersonalAddressbookURI = "moz-abmdbdirectory://abook.mab";
++  let abURI="moz-abmdbdirectory://abook.mab";
++  if (Services.prefs.prefHasUserValue("courrielleur.contactsdav.defaut")){
++    let val=Services.prefs.getCharPref("courrielleur.contactsdav.defaut");
++    if (""!=val){
++      let fic=Services.prefs.getCharPref("ldap_2.servers."+val+".filename");
++      abURI="moz-abmdbdirectory://"+fic;
++    }
++  }  
++  //let addressBook = MailServices.ab.getDirectory(kPersonalAddressbookURI);
++  let addressBook = MailServices.ab.getDirectory(abURI);
+ 
+   let card = Cc["@mozilla.org/addressbook/cardproperty;1"]
+                .createInstance(Ci.nsIAbCard);
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCard.js b/comm-esr60/comm/mail/components/addrbook/content/abCard.js
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCard.js
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCard.js
+@@ -95,10 +95,20 @@
+         .createInstance(Ci.nsIAbCard);
+   gEditCard.titleProperty = "newContactTitle";
+   gEditCard.selectedAB = "";
++  
++  // mantis 4780
++  if (Services.prefs.prefHasUserValue("courrielleur.contactsdav.defaut")){
++    let val=Services.prefs.getCharPref("courrielleur.contactsdav.defaut");
++    if (""!=val){
++      let fic=Services.prefs.getCharPref("ldap_2.servers."+val+".filename");
++      let abURI="moz-abmdbdirectory://"+fic;
++      gEditCard.selectedAB=abURI;
++    }
++  }  
+ 
+   if ("arguments" in window && window.arguments[0])
+   {
+-    gEditCard.selectedAB = kPersonalAddressbookURI;
++    // gEditCard.selectedAB = kPersonalAddressbookURI;
+ 
+     if ("selectedAB" in window.arguments[0] &&
+         (window.arguments[0].selectedAB != kAllDirectoryRoot + "?")) {
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abTrees.js b/comm-esr60/comm/mail/components/addrbook/content/abTrees.js
+--- a/comm-esr60/comm/mail/components/addrbook/content/abTrees.js
++++ b/comm-esr60/comm/mail/components/addrbook/content/abTrees.js
+@@ -12,7 +12,10 @@
+ ChromeUtils.import("resource:///modules/IOUtils.js");
+ 
+ // Tree Sort helper methods.
+-var AB_ORDER = ["aab", "pab", "mork", "ldap", "mapi+other", "anyab", "cab"];
++//var AB_ORDER = ["aab", "pab", "mork", "ldap", "mapi+other", "anyab", "cab"];
++// mantis 4780
++var AB_ORDER = ["aab", "mork", "ldap", "mapi+other", "anyab", "cab", "pab"];
++
+ 
+ function getDirectoryValue(aDir, aKey) {
+   if (aKey == "ab_type") {
+@@ -49,6 +52,16 @@
+ var SORT_FUNCS = [abTypeCompare, abNameCompare];
+ 
+ function abSort(a, b) {
++  
++  let contactsdavdefaut=Services.prefs.getCharPref("courrielleur.contactsdav.defaut");
++  if (""!=contactsdavdefaut){
++    contactsdavdefaut="ldap_2.servers."+contactsdavdefaut;
++    if (contactsdavdefaut==a._directory.dirPrefId)
++      return -1;
++    if (contactsdavdefaut==b._directory.dirPrefId)
++      return 1;
++  } 
++  
+   for (let i = 0; i < SORT_FUNCS.length; i++) {
+     let sortBy = SORT_PRIORITY[i];
+     let aValue = getDirectoryValue(a, sortBy);
+diff --git a/comm-esr60/comm/mailnews/addrbook/content/addrbookWidgets.xml b/comm-esr60/comm/mailnews/addrbook/content/addrbookWidgets.xml
+--- a/comm-esr60/comm/mailnews/addrbook/content/addrbookWidgets.xml
++++ b/comm-esr60/comm/mailnews/addrbook/content/addrbookWidgets.xml
+@@ -254,13 +254,25 @@
+           if (!b)
+             return 1;
+ 
++          // mantis 4780
++          let contactsdavdefaut=Services.prefs.getCharPref("courrielleur.contactsdav.defaut");
++          if (""!=contactsdavdefaut){
++            contactsdavdefaut="ldap_2.servers."+contactsdavdefaut;
++            if (contactsdavdefaut==a.dirPrefId)
++              return -1;
++            if (contactsdavdefaut==b.dirPrefId)
++              return 1;         
++          }            
++
+           // Personal at the top.
+           const kPersonalAddressbookURI = "moz-abmdbdirectory://abook.mab";
+           if (a.URI == kPersonalAddressbookURI)
+-            return -1;
++            //return -1;
++            return 1;
+ 
+           if (b.URI == kPersonalAddressbookURI)
+-            return 1;
++            //return 1;
++            return -1;
+ 
+           // Collected at the bottom.
+           const kCollectedAddressbookURI = "moz-abmdbdirectory://history.mab";

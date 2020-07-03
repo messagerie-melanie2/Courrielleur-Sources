@@ -1,0 +1,88 @@
+# HG changeset patch
+# User pm
+# Date 1545143853 -3600
+#      Tue Dec 18 15:37:33 2018 +0100
+# Node ID 96c0a4c7be759acc55a5a8501ec34d6b830f88a2
+# Parent  178d92437c11a074ba0cea141b31e6e77a301bb2
+Ticket mantis 0005162: Dans 'Elements envoyes', 'Modeles' et 'Brouillons', remplacer colonne Expediteur par Destinataire et Reu par Date
+
+diff --git a/comm-esr60/comm/mail/base/content/folderDisplay.js b/comm-esr60/comm/mail/base/content/folderDisplay.js
+--- a/comm-esr60/comm/mail/base/content/folderDisplay.js
++++ b/comm-esr60/comm/mail/base/content/folderDisplay.js
+@@ -421,7 +421,9 @@
+     "tagsCol",
+     "unreadButtonColHeader",
+     "senderCol",
++    "recipientCol",
+     "subjectCol",
++    "dateCol",
+     "receivedCol",
+     "sizeCol",
+     "flaggedCol"
+@@ -452,7 +454,7 @@
+         return viewWrapper.isNewsFolder || viewWrapper.isFeedFolder;
+       }
+       // senderCol = From. You only care in incoming folders.
+-      return viewWrapper.isMailFolder || viewWrapper.isNewsFolder || viewWrapper.isFeedFolder;
++      return !viewWrapper.isOutgoingFolder && (viewWrapper.isMailFolder || viewWrapper.isNewsFolder || viewWrapper.isFeedFolder);
+     },
+     recipientCol: function (viewWrapper) {
+       if (Services.prefs.getBoolPref("mail.threadpane.use_correspondents")) {
+@@ -471,8 +473,12 @@
+       return !viewWrapper.isNewsFolder;
+     },
+ 
++    dateCol: function (viewWrapper) {
++      return viewWrapper.isOutgoingFolder;
++    },
++
+     receivedCol: function (viewWrapper) {
+-      return viewWrapper.isMailFolder || viewWrapper.isNewsFolder || viewWrapper.isFeedFolder;
++      return !viewWrapper.isOutgoingFolder && (viewWrapper.isMailFolder || viewWrapper.isNewsFolder || viewWrapper.isFeedFolder);
+     },
+ 
+     sizeCol: function (viewWrapper) {
+diff --git a/comm-esr60/comm/mail/base/content/messenger.xul b/comm-esr60/comm/mail/base/content/messenger.xul
+--- a/comm-esr60/comm/mail/base/content/messenger.xul
++++ b/comm-esr60/comm/mail/base/content/messenger.xul
+@@ -460,6 +460,10 @@
+                                  hidden="false" swappedhidden="true"
+                                  label="&fromColumn.label;" tooltiptext="&fromColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
++                        <treecol id="recipientCol" persist="width" flex="4"
++                                 hidden="true" swappedhidden="false"
++                                 label="&recipientColumn.label;" tooltiptext="&recipientColumn2.tooltip;"/>
++                        <splitter class="tree-splitter"/>
+                         <treecol id="subjectCol" persist="width" flex="7" ignoreincolumnpicker="true"
+                                  label="&subjectColumn.label;" tooltiptext="&subjectColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+@@ -473,10 +477,6 @@
+                         <treecol id="dateCol" persist="width" flex="2" hidden="true"
+                                  label="&dateColumn.label;" tooltiptext="&dateColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+-                        <treecol id="recipientCol" persist="width" flex="4"
+-                                 hidden="true" swappedhidden="false"
+-                                 label="&recipientColumn.label;" tooltiptext="&recipientColumn2.tooltip;"/>
+-                        <splitter class="tree-splitter"/>
+                         <treecol id="receivedCol" persist="width" flex="2"
+                                  label="&receivedColumn.label;" tooltiptext="&receivedColumn2.tooltip;"/>
+                         <splitter class="tree-splitter"/>
+diff --git a/comm-esr60/comm/mailnews/db/gloda/modules/dbview.js b/comm-esr60/comm/mailnews/db/gloda/modules/dbview.js
+--- a/comm-esr60/comm/mailnews/db/gloda/modules/dbview.js
++++ b/comm-esr60/comm/mailnews/db/gloda/modules/dbview.js
+@@ -123,9 +123,15 @@
+     senderCol: {
+       visible: true,
+     },
++    recipientCol: {
++      visible: true,
++    },
+     subjectCol: {
+       visible: true,
+     },
++    dateCol: {
++      visible: true,
++    },
+     receivedCol: {
+       visible: true,
+     },

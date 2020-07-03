@@ -1,0 +1,44 @@
+# HG changeset patch
+# User pm
+# Date 1527080304 -7200
+#      Wed May 23 14:58:24 2018 +0200
+# Node ID ccf75c9ef1ab4903b2bf0e23e0bf7b6e7c7df9eb
+# Parent  d8a8676364b8a3774b0d4f6e1236f75701782a0a
+Ticket mantis 0004287: Archibald desactive
+
+diff --git a/comm-esr60/comm/mail/themes/linux/mail/primaryToolbar.css b/comm-esr60/comm/mail/themes/linux/mail/primaryToolbar.css
+--- a/comm-esr60/comm/mail/themes/linux/mail/primaryToolbar.css
++++ b/comm-esr60/comm/mail/themes/linux/mail/primaryToolbar.css
+@@ -123,7 +123,7 @@
+   list-style-image: url("chrome://messenger/skin/icons/compact.svg");
+ }
+ 
+-#button-archive {
++#archibald-btarchive {
+   list-style-image: url("chrome://messenger/skin/icons/archive.svg");
+ }
+ 
+diff --git a/comm-esr60/comm/mail/themes/osx/mail/primaryToolbar.css b/comm-esr60/comm/mail/themes/osx/mail/primaryToolbar.css
+--- a/comm-esr60/comm/mail/themes/osx/mail/primaryToolbar.css
++++ b/comm-esr60/comm/mail/themes/osx/mail/primaryToolbar.css
+@@ -140,7 +140,7 @@
+   list-style-image: url("chrome://messenger/skin/icons/compact.svg");
+ }
+ 
+-#button-archive {
++#archibald-btarchive {
+   list-style-image: url("chrome://messenger/skin/icons/archive.svg");
+ }
+ 
+diff --git a/comm-esr60/comm/mail/themes/windows/mail/primaryToolbar.css b/comm-esr60/comm/mail/themes/windows/mail/primaryToolbar.css
+--- a/comm-esr60/comm/mail/themes/windows/mail/primaryToolbar.css
++++ b/comm-esr60/comm/mail/themes/windows/mail/primaryToolbar.css
+@@ -520,7 +520,7 @@
+   list-style-image: url("chrome://messenger/skin/icons/compact.svg");
+ }
+ 
+-#button-archive {
++#archibald-btarchive {
+   list-style-image: url("chrome://messenger/skin/icons/archive.svg");
+ }
+ 

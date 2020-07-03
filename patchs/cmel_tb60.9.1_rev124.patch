@@ -1,0 +1,21 @@
+# HG changeset patch
+# User pm
+# Date 1562747784 -7200
+#      Wed Jul 10 10:36:24 2019 +0200
+# Node ID 3cf41eb0cc44241978673f9ad85d178f287bd1ca
+# Parent  d803b8c87f9950be8be695fa8527a9be0c7aad67
+Ticket mantis 0005304: Ne pas ouvrir les onglets webapps au démarrage
+
+diff --git a/comm-esr60/comm/mail/base/content/tabmail.xml b/comm-esr60/comm/mail/base/content/tabmail.xml
+--- a/comm-esr60/comm/mail/base/content/tabmail.xml
++++ b/comm-esr60/comm/mail/base/content/tabmail.xml
+@@ -1034,6 +1034,9 @@
+           let mode = this.tabModes[aState.mode];
+           if (!mode)
+             return false;
++            
++          if ("contentTab"==mode.type)
++            return false;
+ 
+           let restoreFunc = mode.restoreTab || mode.tabType.restoreTab;
+ 

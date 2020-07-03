@@ -1,0 +1,64 @@
+# HG changeset patch
+# User pm
+# Date 1538468077 -7200
+#      Tue Oct 02 10:14:37 2018 +0200
+# Node ID b435bd5663f15df51e92a9be3c7a87586832c84e
+# Parent  ee17c45ddd4d46f560eb73e431049a90922a5dbd
+Ticket mantis 0004983: Expediteur non modifie lors du deplacement d'1 message dans une autre boite
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -2893,15 +2893,17 @@
+   identityList.selectedItem =
+     identityList.getElementsByAttribute("identitykey", params.identity.key)[0];
+     
+-  //courrielleur - mantis 2749 Emetteur par défaut d'un message émis depuis le dossier modèle
+-  if (params.origMsgHdr &&
+-      params.origMsgHdr.folder &&
+-      (params.origMsgHdr.folder.getFlag(Components.interfaces.nsMsgFolderFlags.Drafts|Components.interfaces.nsMsgFolderFlags.Templates))){
+-    let ident=GetDefaultIdentityForMsgHdr(params.origMsgHdr);
++  // mantis 2749 Emetteur par défaut d'un message émis depuis le dossier modèle
++  // mantis 0004983: Expéditeur non modifié lors du déplacement d'1 message dans une autre boîte
++  let origMsgHdr=params.origMsgHdr;
++  if (origMsgHdr &&
++      origMsgHdr.folder &&
++      cm2IsFolderDraftTemplate(origMsgHdr.folder)){
++    let ident=GetDefaultIdentityForMsgHdr(origMsgHdr);
+     if (ident)
+       identityList.selectedItem=identityList.getElementsByAttribute("identitykey", ident.key)[0];
+   }
+-  //fin bug mantis 2749  (+ else)      
++  //fin mantis 2749  (+ else)      
+ 
+   // Here we set the From from the original message, be it a draft or another
+   // message, for example a template, we want to "edit as new".
+@@ -7268,12 +7270,27 @@
+   }
+ }
+ 
+-//courrielleur - mantis 2749 Emetteur par défaut d'un message émis depuis le dossier modèle
++// mantis 2749 Emetteur par défaut d'un message émis depuis le dossier modèle
+ function GetDefaultIdentityForMsgHdr(msghdr) {
+ 
+   return MailServices.accounts.getFirstIdentityForServer(msghdr.folder.server);
+ }
+ 
++// mantis 0004983: Expéditeur non modifié lors du déplacement d'1 message dans une autre boîte
++function cm2IsFolderDraftTemplate(folder){
++  
++  const Ci=Components.interfaces;  
++  let dossier=folder;
++  while (!dossier.isServer){   
++    if (dossier.getFlag(Ci.nsMsgFolderFlags.Drafts|Ci.nsMsgFolderFlags.Templates))
++      return true;
++    dossier=dossier.parent;
++  }
++  
++  return false;
++}
++
++
+ /**
+  * Convert the blocked content to a data URL and swap the src to that for the
+  * elements that were using it.

@@ -1,0 +1,14 @@
+# HG changeset patch
+# User pm
+# Date 1540896592 -3600
+#      Tue Oct 30 11:49:52 2018 +0100
+# Node ID 852b711f60e51d748c64452bcc373bce60029982
+# Parent  f53e01eccb657f5befef8c58c554e6157393e1f3
+tag courrielleur version 8.0T1
+
+diff --git a/.hgtags b/.hgtags
+new file mode 100644
+--- /dev/null
++++ b/.hgtags
+@@ -0,0 +1,1 @@
++27336b2dd124b0a235ba627bb51afaba17e74d39 8.0T1

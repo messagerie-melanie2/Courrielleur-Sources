@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1520527220 -3600
+#      Thu Mar 08 17:40:20 2018 +0100
+# Node ID 62e78070c6b2a175d49b9a3152d4ed5b9e818831
+# Parent  c2fd36e787f7d04b6797a41cadfea5cc253af49d
+Ticket mantis 0004899: Afficher l'entête dans l'arborescence des carnets
+
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul b/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul
+--- a/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul
++++ b/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul
+@@ -666,7 +666,7 @@
+   <!-- The main address book three pane -->
+   <hbox id="abContent" flex="1">
+     <vbox id="dirTreeBox" persist="width collapsed">
+-      <sidebarheader id="abDirTreeHeader" hidden="true" align="center">
++      <sidebarheader id="abDirTreeHeader" align="center">
+         <label id="abDirTreeHeader-title" value="&dirTreeHeader.label;" control="dirTree"/>
+       </sidebarheader>
+ 

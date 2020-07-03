@@ -1,0 +1,22 @@
+# HG changeset patch
+# User pm
+# Date 1458038536 -3600
+#      Tue Mar 15 11:42:16 2016 +0100
+# Node ID 520cb8eb59797ce79140a05f3afad70d88de5fc0
+# Parent  41289488f5b1125fad9fd27951af873908a75309
+Ticket mantis 0001399 : L'impression de l'agenda n'imprime pas les couleurs
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -121,6 +121,10 @@
+ // Base URL for web-based support pages.
+ pref("app.support.baseURL", "https://melanie2web.din.developpement-durable.gouv.fr/aide");
+ 
++//Option imprimer le fond de page (couleurs et images)
++pref("print.print_bgcolor", true);
++pref("print.print_bgimages", true);
++
+ // Show error messages in error console.
+ pref("javascript.options.showInConsole", true);
+ 

@@ -1,0 +1,64 @@
+# HG changeset patch
+# User pm
+# Date 1553522926 -3600
+#      Mon Mar 25 15:08:46 2019 +0100
+# Node ID 8681684821144c8bce63858d2cfc6a089b136d32
+# Parent  96c0a4c7be759acc55a5a8501ec34d6b830f88a2
+Ticket mantis 0005056: Enlever toutes les tiquettes les rajoute toutes temporairement
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+@@ -834,20 +834,19 @@
+ 
+   var messages = Cc["@mozilla.org/array;1"]
+                    .createInstance(Ci.nsIMutableArray);
+-  let tagArray = MailServices.tags.getAllTags({});
+-
+-  //cm2 ~commente (mantis 2016)
+-  var allKeys = "";
+-  for (var j = 0, e = 0; j < tagArray.length; ++j)
+-  {
+-    var cle=tagArray[j].key;
+-    if ("~commente"==cle)
+-      continue;    
+-    if (e)
+-      allKeys += " ";    
+-    allKeys += cle;
+-    //allKeys += tagArray[j].key;
+-    e++;
++
++  // tableau des tags des messages du dossier
++  let msgtags=[];
++
++  function addmsgtags(msgHdr){
++    // ajouter les tags de msgHdr dans msgtags
++    let tags=msgHdr.getStringProperty("keywords").split(" ");
++    for (let tag of tags){
++      if ("~commente"==tag)
++        continue;
++      if (!msgtags.includes(tag))
++        msgtags.push(tag);
++    }
+   }
+   //fin cm2 ~commente (mantis 2016)
+ 
+@@ -866,14 +865,16 @@
+     if (prevHdrFolder != msgHdr.folder)
+     {
+       if (prevHdrFolder)
+-        prevHdrFolder.removeKeywordsFromMessages(messages, allKeys);
++        prevHdrFolder.removeKeywordsFromMessages(messages, msgtags.join(' '));
+       messages.clear();
++      msgtags=[];
+       prevHdrFolder = msgHdr.folder;
+     }
+     messages.appendElement(msgHdr);
++    addmsgtags(msgHdr);
+   }
+   if (prevHdrFolder)
+-    prevHdrFolder.removeKeywordsFromMessages(messages, allKeys);
++    prevHdrFolder.removeKeywordsFromMessages(messages,  msgtags.join(' '));
+   OnTagsChange();
+ }
+ 

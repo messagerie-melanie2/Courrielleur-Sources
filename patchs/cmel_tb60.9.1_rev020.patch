@@ -1,0 +1,61 @@
+# HG changeset patch
+# User pm
+# Date 1526630318 -7200
+#      Fri May 18 09:58:38 2018 +0200
+# Node ID 7f2121c801bba604b59b8ca59ad5a1085d27c486
+# Parent  7774615d3464de5056b317dbc00514f58bcc5cd9
+Ticket mantis 0003130 : Sous windows 7, l'ecran d'integration est affiche pour les nouveaux profils
+
+diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+--- a/comm-esr60/comm/mail/app/profile/all-thunderbird.js
++++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
+@@ -487,7 +487,7 @@
+ // OS Integrated Search and Indexing
+ #ifdef XP_WIN
+ pref("mail.winsearch.enable", false);
+-pref("mail.winsearch.firstRunDone", false);
++pref("mail.winsearch.firstRunDone", true);
+ #else
+ #ifdef XP_MACOSX
+ pref("mail.spotlight.enable", false);
+diff --git a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+--- a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
++++ b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+@@ -603,8 +603,9 @@
+            && !shellService.isDefaultClient(true, nsIShellService.MAIL)) ||
+         (SearchIntegration && !SearchIntegration.osVersionTooLow &&
+          !SearchIntegration.osComponentsNotRunning && !SearchIntegration.firstRunDone)) {
+-        window.openDialog("chrome://messenger/content/systemIntegrationDialog.xul",
+-                          "SystemIntegration", "modal,centerscreen,chrome,resizable=no");
++        //cm2v5 - mantis 3130
++        //window.openDialog("chrome://messenger/content/systemIntegrationDialog.xul",
++        //                 "SystemIntegration", "modal,centerscreen,chrome,resizable=no");
+         // On windows, there seems to be a delay between setting TB as the
+         // default client, and the isDefaultClient check succeeding.
+         if (shellService.isDefaultClient(true, nsIShellService.MAIL))
+diff --git a/comm-esr60/comm/mail/components/search/nsMailWinSearchHelper.cpp b/comm-esr60/comm/mail/components/search/nsMailWinSearchHelper.cpp
+--- a/comm-esr60/comm/mail/components/search/nsMailWinSearchHelper.cpp
++++ b/comm-esr60/comm/mail/components/search/nsMailWinSearchHelper.cpp
+@@ -26,7 +26,7 @@
+ 
+ // APP_REG_NAME_MAIL should be kept in synch with AppRegNameMail
+ // in the installer file: defines.nsi.in
+-#define APP_REG_NAME_MAIL L"Thunderbird"
++#define APP_REG_NAME_MAIL L"Courrielleur"
+ 
+ nsMailWinSearchHelper::nsMailWinSearchHelper()
+ {
+diff --git a/comm-esr60/comm/mail/components/shell/nsMailWinIntegration.cpp b/comm-esr60/comm/mail/components/shell/nsMailWinIntegration.cpp
+--- a/comm-esr60/comm/mail/components/shell/nsMailWinIntegration.cpp
++++ b/comm-esr60/comm/mail/components/shell/nsMailWinIntegration.cpp
+@@ -65,8 +65,8 @@
+ 
+ // APP_REG_NAME_MAIL and APP_REG_NAME_NEWS should be kept in synch with
+ // AppRegNameMail and AppRegNameNews in the installer file: defines.nsi.in
+-#define APP_REG_NAME_MAIL L"Thunderbird"
+-#define APP_REG_NAME_NEWS L"Thunderbird (News)"
++#define APP_REG_NAME_MAIL L"Courrielleur"
++#define APP_REG_NAME_NEWS L"Courrielleur (News)"
+ #define CLS_EML "ThunderbirdEML"
+ #define CLS_MAILTOURL "Thunderbird.Url.mailto"
+ #define CLS_NEWSURL "Thunderbird.Url.news"

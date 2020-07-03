@@ -1,0 +1,24 @@
+# HG changeset patch
+# User pm
+# Date 1526645793 -7200
+#      Fri May 18 14:16:33 2018 +0200
+# Node ID 946937fa6b8c54c1fa1f5b3d26bdc2b2ebb51c0a
+# Parent  a4ac4fd6fb4ca6fec282e68bec887405a333ea42
+Ticket mantis 0003842 : Disparition des lignes d'aide à la lecture
+
+diff --git a/comm-esr60/comm/mail/themes/linux/mail/mailWindow1.css b/comm-esr60/comm/mail/themes/linux/mail/mailWindow1.css
+--- a/comm-esr60/comm/mail/themes/linux/mail/mailWindow1.css
++++ b/comm-esr60/comm/mail/themes/linux/mail/mailWindow1.css
+@@ -166,8 +166,10 @@
+   -moz-appearance: none;
+ }
+ 
+-#threadTree > treechildren::-moz-tree-row(odd) {
+-  background-color: transparent;
++#threadTree treechildren::-moz-tree-row(odd) {
++  background-image: url("chrome://messenger/skin/icons/row.png");
++  background-position: bottom;
++  background-repeat: repeat-x;
+ }
+ 
+ #threadTree > treechildren::-moz-tree-row(dummy, odd) {

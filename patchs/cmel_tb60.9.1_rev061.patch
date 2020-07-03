@@ -1,0 +1,102 @@
+# HG changeset patch
+# User pm
+# Date 1527078090 -7200
+#      Wed May 23 14:21:30 2018 +0200
+# Node ID 39cc658aab40417bd06f0502b19fb13771b27cdf
+# Parent  282b032a89038b16eac51499d58d415d83cfb95f
+Ticket mantis 0002943: Courrielleur URL proposees pour le menu Aide
+
+diff --git a/comm-esr60/comm/mail/base/content/helpMenu.inc b/comm-esr60/comm/mail/base/content/helpMenu.inc
+--- a/comm-esr60/comm/mail/base/content/helpMenu.inc
++++ b/comm-esr60/comm/mail/base/content/helpMenu.inc
+@@ -14,12 +14,12 @@
+ #endif
+                     key="key_openHelp"
+                     oncommand="openSupportURL();"/>
++          <menuitem id="releaseNotes"
++                    label="&releaseCmd2.label;" accesskey="&releaseCmd2.accesskey;"
++                    oncommand="openFormattedURL('app.releaseNotesURL');"/>
+           <menuitem id="whatsNew"
+                     label="&whatsNewCmd.label;" accesskey="&whatsNewCmd.accesskey;"
+                     oncommand="openWhatsNew();"/>
+-          <menuitem id="releaseNotes"
+-                    label="&releaseCmd2.label;" accesskey="&releaseCmd2.accesskey;"
+-                    oncommand="openFormattedURL('app.releaseNotesURL');"/>
+           <menuseparator id="functionsSeparator"/>
+           <menuitem id="helpSafeMode"
+                     label="&helpSafeMode.label;"
+diff --git a/comm-esr60/comm/mail/components/about-support/aboutSupportOverlay.xul b/comm-esr60/comm/mail/components/about-support/aboutSupportOverlay.xul
+--- a/comm-esr60/comm/mail/components/about-support/aboutSupportOverlay.xul
++++ b/comm-esr60/comm/mail/components/about-support/aboutSupportOverlay.xul
+@@ -13,7 +13,7 @@
+       <menuitem id="aboutsupport_open"
+                 label="&helpTroubleshootingInfo.label;"
+                 accesskey="&helpTroubleshootingInfo.accesskey;"
+-                insertafter="releaseNotes"
++                insertafter="whatsNew"
+                 oncommand="openAboutSupport();" />
+   </menupopup>
+ 
+diff --git a/comm-esr60/comm/mail/components/about-support/content/aboutSupport.js b/comm-esr60/comm/mail/components/about-support/content/aboutSupport.js
+--- a/comm-esr60/comm/mail/components/about-support/content/aboutSupport.js
++++ b/comm-esr60/comm/mail/components/about-support/content/aboutSupport.js
+@@ -61,7 +61,11 @@
+     $("application-box").textContent = data.name;
+     $("useragent-box").textContent = data.userAgent;
+     $("os-box").textContent = data.osVersion;
+-    $("supportLink").href = data.supportURL;
++    // mantis 0002943: Courrielleur URL proposees pour le menu Aide
++    //$("supportLink").href = data.supportURL;
++    $("cm2lienfaq").href = data.cm2lienfaq;
++    $("cm2lientrucs").href = data.cm2lientrucs;
++    
+     let version = AppConstants.MOZ_APP_VERSION_DISPLAY;
+     if (data.vendor)
+       version += " (" + data.vendor + ")";
+diff --git a/comm-esr60/toolkit/modules/Troubleshoot.jsm b/comm-esr60/toolkit/modules/Troubleshoot.jsm
+--- a/comm-esr60/toolkit/modules/Troubleshoot.jsm
++++ b/comm-esr60/toolkit/modules/Troubleshoot.jsm
+@@ -186,9 +186,17 @@
+     try {
+       data.vendor = Services.prefs.getCharPref("app.support.vendor");
+     } catch (e) {}
++    
++    // mantis 0002943: Courrielleur URL proposees pour le menu Aide
+     try {
+-      data.supportURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
++      //data.supportURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
++      data.cm2lienfaq = Services.urlFormatter.formatURLPref("courrielleur.cm2lienfaq");
+     } catch (e) {}
++    try {
++      data.cm2lientrucs = Services.urlFormatter.formatURLPref("courrielleur.cm2lientrucs");
++    } catch (e) {}
++    // fin mantis 0002943: Courrielleur URL proposees pour le menu Aide
++    
+ 
+     data.numTotalWindows = 0;
+     data.numRemoteWindows = 0;
+diff --git a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+@@ -3,7 +3,7 @@
+    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+ 
+ <!-- Help Menu -->
+-<!ENTITY helpMenu.label "Aide">
++<!ENTITY helpMenu.label "Aide sur le Courrielleur">
+ <!ENTITY helpMenu.accesskey "e">
+ <!-- LOCALIZATION NOTE some localizations of Windows use "?"
+                        for the help button in the menubar but Gnome does not.   -->
+diff --git a/fr-esr60/fr/toolkit/chrome/global/aboutSupport.dtd b/fr-esr60/fr/toolkit/chrome/global/aboutSupport.dtd
+--- a/fr-esr60/fr/toolkit/chrome/global/aboutSupport.dtd
++++ b/fr-esr60/fr/toolkit/chrome/global/aboutSupport.dtd
+@@ -8,7 +8,8 @@
+ <!ENTITY aboutSupport.pageSubtitle "
+   Cette page contient des informations techniques qui pourraient être utiles quand vous essayez
+   de résoudre un problème. Si vous cherchez des réponses à des questions courantes
+-  sur &brandShortName;, veuillez consulter notre <a id='supportLink'>site web d’assistance</a>.
++  sur le &brandShortName;, veuillez consulter la <a id='cm2lienfaq'>FAQ Informaticiens</a>
++  ainsi que le <a id='cm2lientrucs'>Trucs et Astuces du site utilisateurs</a>.
+ ">
+ 
+ <!ENTITY aboutSupport.crashes.title "Rapports de plantage">

@@ -1,0 +1,32 @@
+# HG changeset patch
+# User pm
+# Date 1534169008 -7200
+#      Mon Aug 13 16:03:28 2018 +0200
+# Node ID 9780b36f8ef30adc231b9958f1385e9b3ccaf1a8
+# Parent  a6342d2cb700f5a2e289e53268da41cc9abfcbbe
+Ticket mantis mantis 0002656: Dans les logs Apache majcm2access, ajouter l'uid
+
+diff --git a/comm-esr60/toolkit/mozapps/update/nsUpdateService.js b/comm-esr60/toolkit/mozapps/update/nsUpdateService.js
+--- a/comm-esr60/toolkit/mozapps/update/nsUpdateService.js
++++ b/comm-esr60/toolkit/mozapps/update/nsUpdateService.js
+@@ -14,6 +14,8 @@
+ ChromeUtils.import("resource://gre/modules/AppConstants.jsm", this);
+ Cu.importGlobalProperties(["XMLHttpRequest"]);
+ 
++ChromeUtils.import("resource://gre/modules/pacomeAuthUtils.jsm");
++
+ const UPDATESERVICE_CID = Components.ID("{B3C290A6-3943-4B89-8BBE-C01EB7B3B311}");
+ const UPDATESERVICE_CONTRACTID = "@mozilla.org/updates/update-service;1";
+ 
+@@ -2966,6 +2968,11 @@
+     if (this._getCanMigrate()) {
+       url += (url.includes("?") ? "&" : "?") + "mig64=1";
+     }
++    
++    // mantis 0002656: Dans les logs Apache majcm2access, ajouter l'uid.
++    let uid=PacomeAuthUtils.GetUidComptePrincipal();
++    url+=(url.includes("?") ? "&" : "?")+"&uid="+uid;
++    //fin mantis 0002656    
+ 
+     LOG("Checker:getUpdateURL - update URL: " + url);
+     return url;

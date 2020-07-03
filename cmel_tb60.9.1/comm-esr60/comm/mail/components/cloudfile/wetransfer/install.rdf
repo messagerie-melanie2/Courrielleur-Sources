@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, you can obtain one at http://mozilla.org/MPL/2.0/. -->
+
+<RDF xmlns="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:em="http://www.mozilla.org/2004/em-rdf#">
+
+  <Description about="urn:mozilla:install-manifest">
+    <em:id>wetransfer@extensions.thunderbird.net</em:id>
+    <em:name>FileLink for WeTransfer</em:name>
+    <em:description>Share your attachments via WeTransfer</em:description>
+    <em:version>2.0.0</em:version>
+    <em:bootstrap>true</em:bootstrap>
+    <em:hasEmbeddedWebExtension>true</em:hasEmbeddedWebExtension>
+
+    <em:targetApplication>
+      <Description>
+        <em:id>{3550f703-e582-4d05-9a08-453d09bdfdc6}</em:id>
+        <em:minVersion>60.4</em:minVersion>
+        <em:maxVersion>60.*</em:maxVersion>
+      </Description>
+    </em:targetApplication>
+  </Description>
+</RDF>

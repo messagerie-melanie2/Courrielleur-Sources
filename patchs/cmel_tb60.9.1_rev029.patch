@@ -1,0 +1,47 @@
+# HG changeset patch
+# User pm
+# Date 1526635903 -7200
+#      Fri May 18 11:31:43 2018 +0200
+# Node ID 593aec05ed4c5a59e004d453643760a9fac4d0a2
+# Parent  7bc032d8edb476f106376f2d52fdc565e01eecb1
+Ticket mantis 0002749 : Emetteur par defaut d'un message emis depuis le dossier modele
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -2892,11 +2892,21 @@
+ 
+   identityList.selectedItem =
+     identityList.getElementsByAttribute("identitykey", params.identity.key)[0];
++    
++  //courrielleur - mantis 2749 Emetteur par défaut d'un message émis depuis le dossier modèle
++  if (params.origMsgHdr &&
++      params.origMsgHdr.folder &&
++      (params.origMsgHdr.folder.getFlag(Components.interfaces.nsMsgFolderFlags.Drafts|Components.interfaces.nsMsgFolderFlags.Templates))){
++    let ident=GetDefaultIdentityForMsgHdr(params.origMsgHdr);
++    if (ident)
++      identityList.selectedItem=identityList.getElementsByAttribute("identitykey", ident.key)[0];
++  }
++  //fin bug mantis 2749  (+ else)      
+ 
+   // Here we set the From from the original message, be it a draft or another
+   // message, for example a template, we want to "edit as new".
+   // Only do this if the message is our own draft or template.
+-  if (params.composeFields.creatorIdentityKey && params.composeFields.from)
++  else if (params.composeFields.creatorIdentityKey && params.composeFields.from)
+   {
+     let from = MailServices.headerParser.parseEncodedHeader(params.composeFields.from, null).join(", ");
+     if (from != identityList.value)
+@@ -7215,6 +7225,12 @@
+   }
+ }
+ 
++//courrielleur - mantis 2749 Emetteur par défaut d'un message émis depuis le dossier modèle
++function GetDefaultIdentityForMsgHdr(msghdr) {
++
++  return MailServices.accounts.getFirstIdentityForServer(msghdr.folder.server);
++}
++
+ /**
+  * Convert the blocked content to a data URL and swap the src to that for the
+  * elements that were using it.

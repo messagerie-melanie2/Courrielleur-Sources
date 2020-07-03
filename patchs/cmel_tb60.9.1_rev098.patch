@@ -1,0 +1,36 @@
+# HG changeset patch
+# User pm
+# Date 1535988321 -7200
+#      Mon Sep 03 17:25:21 2018 +0200
+# Node ID 4319591bfd79674d57940296655657e627e78bfe
+# Parent  9780b36f8ef30adc231b9958f1385e9b3ccaf1a8
+Carnet d'adresse - mémoriser sélection - premier par défaut
+
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCommon.js b/comm-esr60/comm/mail/components/addrbook/content/abCommon.js
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCommon.js
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCommon.js
+@@ -619,7 +619,9 @@
+   let startupURI = Services.prefs.getCharPref("mail.addr_book.view.startupURI");
+   if (!startupURI) {
+     // If pref is empty, fall back to "All Address Books" root directory.
+-    startupURI = kAllDirectoryRoot + "?"
++    //startupURI = kAllDirectoryRoot + "?"
++    gDirectoryTreeView.selection.select(0);
++    return;
+   }
+   let startupDirTreeIndex = gDirectoryTreeView.getIndexForId(startupURI);
+   // XXX TODO: If directory of startupURI is collapsed, we fail to find and
+diff --git a/comm-esr60/comm/mailnews/mailnews.js b/comm-esr60/comm/mailnews/mailnews.js
+--- a/comm-esr60/comm/mailnews/mailnews.js
++++ b/comm-esr60/comm/mailnews/mailnews.js
+@@ -172,8 +172,8 @@
+ pref("mail.showCondensedAddresses", false);
+ #endif
+ 
+-pref("mail.addr_book.view.startupURI", "moz-abdirectory://?");
+-pref("mail.addr_book.view.startupURIisDefault", true);
++pref("mail.addr_book.view.startupURI", "");
++pref("mail.addr_book.view.startupURIisDefault", false);
+ 
+ // mail.addr_book.quicksearchquery.format is the model query used for:
+ // * TB: AB Quick Search and composition's Contact Side Bar

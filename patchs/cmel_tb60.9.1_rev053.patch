@@ -1,0 +1,24 @@
+# HG changeset patch
+# User pm
+# Date 1364312953 -3600
+#      Tue Mar 26 16:49:13 2013 +0100
+# Node ID 72dcc626f6c460806c2e25f0fee80af6f5aeb620
+# Parent  5cd344d2cb835af22898661ee89d3a1bcb9a2175
+Ticket mantis 0002816 : Pas de sous-dossier sur courrier entrant boite partagee
+
+diff --git a/comm-esr60/comm/mail/base/content/mailContextMenus.js b/comm-esr60/comm/mail/base/content/mailContextMenus.js
+--- a/comm-esr60/comm/mail/base/content/mailContextMenus.js
++++ b/comm-esr60/comm/mail/base/content/mailContextMenus.js
+@@ -455,6 +455,12 @@
+     let showNewFolderItem =
+       ((folders[0].server.type != "nntp") && folders[0].canCreateSubfolders) ||
+       (specialFolder == "Inbox");
++
++    //cm2 pas de sous-dossier sur courrier entrant boite partagee
++    if (cm2IsEntrantBalp(folders[0]))
++      showNewFolderItem=false;
++    //fin cm2
++
+     ShowMenuItem("folderPaneContext-new", showNewFolderItem);
+     // XXX: Can't offline imap create folders nowadays?
+     EnableMenuItem("folderPaneContext-new", folders[0].server.type != "imap" ||

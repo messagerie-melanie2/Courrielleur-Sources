@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1534168927 -7200
+#      Mon Aug 13 16:02:07 2018 +0200
+# Node ID a6342d2cb700f5a2e289e53268da41cc9abfcbbe
+# Parent  1d1db81e9e3f44f74db3c2f1172591d75e34f5d4
+Ticket mantis 0001871: rendre le courrielleur non sensible a la preference app.update.url.override
+
+diff --git a/comm-esr60/toolkit/mozapps/update/nsUpdateService.js b/comm-esr60/toolkit/mozapps/update/nsUpdateService.js
+--- a/comm-esr60/toolkit/mozapps/update/nsUpdateService.js
++++ b/comm-esr60/toolkit/mozapps/update/nsUpdateService.js
+@@ -45,7 +45,7 @@
+ const PREF_APP_UPDATE_SOCKET_MAXERRORS     = "app.update.socket.maxErrors";
+ const PREF_APP_UPDATE_SOCKET_RETRYTIMEOUT  = "app.update.socket.retryTimeout";
+ const PREF_APP_UPDATE_STAGING_ENABLED      = "app.update.staging.enabled";
+-const PREF_APP_UPDATE_URL                  = "app.update.url";
++const PREF_APP_UPDATE_URL                  = "courrielleur.urlmaj";
+ const PREF_APP_UPDATE_URL_DETAILS          = "app.update.url.details";
+ 
+ const URI_BRAND_PROPERTIES      = "chrome://branding/locale/brand.properties";

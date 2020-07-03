@@ -1,0 +1,42 @@
+# HG changeset patch
+# User pm
+# Date 1527149604 -7200
+#      Thu May 24 10:13:24 2018 +0200
+# Node ID a7af425a01a5e96d7e12977f1032d55cdeb791b1
+# Parent  dd7423998369a28e1d879efdb514f7b4750b70d4
+Ticket mantis 0004633: Supprimer la fonctionnalite 'Personnaliser l'adresse d'expedition'
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -4257,10 +4257,11 @@
+       }
+     }
+   }
+-
++  /* mantis 0004633: Supprimer la fonctionnalite 'Personnaliser l'adresse d'expedition'
+   menulist.menupopup.appendChild(document.createElement("menuseparator"));
+   menulist.menupopup.appendChild(document.createElement("menuitem"))
+           .setAttribute("command", "cmd_customizeFromAddress");
++  */
+ }
+ 
+ function getCurrentAccountKey()
+diff --git a/comm-esr60/comm/mail/components/compose/content/messengercompose.xul b/comm-esr60/comm/mail/components/compose/content/messengercompose.xul
+--- a/comm-esr60/comm/mail/components/compose/content/messengercompose.xul
++++ b/comm-esr60/comm/mail/components/compose/content/messengercompose.xul
+@@ -885,11 +885,13 @@
+             <menupopup id="fccMenuPopup" type="folder" mode="filing" showFileHereLabel="true"
+                        fileHereLabel="&fileHereMenu.label;"/>
+           </menu>
++          <!-- mantis 0004633: Supprimer la fonctionnalite 'Personnaliser l'adresse d'expedition'
+           <menuseparator/>
+           <menuitem type="checkbox" command="cmd_customizeFromAddress"
+                     accesskey="&customizeFromAddress.accesskey;"/>
++          -->
+           <menuseparator id="smimeOptionsSeparator"/>
+-
++          
+           <menuitem id="menu_securityEncryptRequire1"
+                     type="checkbox"
+                     label="&menu_securityEncryptRequire.label;"

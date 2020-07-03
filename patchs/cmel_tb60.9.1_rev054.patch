@@ -1,0 +1,305 @@
+# HG changeset patch
+# User pm
+# Date 1526651537 -7200
+#      Fri May 18 15:52:17 2018 +0200
+# Node ID 58cb50ddf5c3b81fc31ea6cbbff1d816996cc2d0
+# Parent  72dcc626f6c460806c2e25f0fee80af6f5aeb620
+Ticket mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur
+
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCard.inc b/comm-esr60/comm/mail/components/addrbook/content/abCard.inc
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCard.inc
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCard.inc
+@@ -102,6 +102,7 @@
+                 <textbox id="PrimaryEmail" flex="1" class="uri-element"/>
+               </hbox>
+             </hbox>
++            <!-- Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur -->
+             <hbox id="SecondaryEmailContainer" align="center">
+               <spacer flex="1"/>
+               <label control="SecondEmail" value="&SecondEmail.label;"
+@@ -110,15 +111,15 @@
+                 <textbox id="SecondEmail" flex="1" class="uri-element"/>
+               </hbox>
+             </hbox>
+-            <hbox id="ScreenNameContainer" align="center">
++            <hbox id="thirdEmailContainer" align="center">
+               <spacer flex="1"/>
+-              <label class="text-link" value="&chatName.label;"
+-                     onclick="showChat();"/>
++              <label control="ThirdEmail" value="&ThirdEmail.label;"
++                     accesskey="&ThirdEmail.accesskey;"/>
+               <hbox class="CardEditWidth">
+-                <textbox id="ChatName" readonly="true" flex="1"
+-                         onclick="showChat();"/>
++                <textbox id="ThirdEmail" flex="1" class="uri-element"/>
+               </hbox>
+             </hbox>
++            <!-- fin Bug mantis 0002625 -->
+           </vbox> <!-- End of Name/Email -->
+           <!-- Phone Number section -->
+           <vbox id="PhoneNumbers">
+@@ -152,6 +153,18 @@
+                      accesskey="&CellularNumber.accesskey;"/>
+               <textbox id="CellularNumber" class="PhoneEditWidth"/>
+             </hbox>
++            <!-- Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur -->
++            <hbox flex="1"/>
++            <hbox id="ScreenNameContainer" align="center">
++              <spacer flex="1"/>
++              <label class="text-link" value="&chatName.label;"
++                     onclick="showChat();"/>
++              <hbox class="CardEditWidth">
++                <textbox id="ChatName" readonly="true" flex="1"
++                         onclick="showChat();"/>
++              </hbox>
++            </hbox>
++            <!-- fin Bug mantis 0002625 -->
+           </vbox> <!-- End of Phonenumbers -->
+         </hbox> <!-- End of Name/Email/Phonenumbers -->
+         <!-- Email Preferences -->
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCard.js b/comm-esr60/comm/mail/components/addrbook/content/abCard.js
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCard.js
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCard.js
+@@ -24,6 +24,8 @@
+           // Contact > Internet
+          ["PrimaryEmail", "PrimaryEmail"],
+          ["SecondEmail", "SecondEmail"],
++         //Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur
++         ["ThirdEmail", "ThirdEmail"],
+           // Contact > Phones
+          ["WorkPhone", "WorkPhone"],
+          ["HomePhone", "HomePhone"],
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCardView.js b/comm-esr60/comm/mail/components/addrbook/content/abCardView.js
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCardView.js
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCardView.js
+@@ -16,6 +16,9 @@
+ var zListName;
+ var zPrimaryEmail;
+ var zSecondaryEmail;
++//Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur
++var zThirdEmail;
++//fin Bug mantis 0002625
+ var zNickname;
+ var zDisplayName;
+ var zWork;
+@@ -44,6 +47,9 @@
+ {
+   zPrimaryEmail = gAddressBookBundle.getString("propertyPrimaryEmail");
+   zSecondaryEmail = gAddressBookBundle.getString("propertySecondaryEmail");
++  //Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur
++  zThirdEmail = gAddressBookBundle.getString("propertyThirdEmail");
++  //fin Bug mantis 0002625
+   zNickname = gAddressBookBundle.getString("propertyNickname");
+   zDisplayName = gAddressBookBundle.getString("propertyDisplayName");
+   zListName = gAddressBookBundle.getString("propertyListName");
+@@ -90,6 +96,10 @@
+   cvData.cvListName               = doc.getElementById("cvListName");
+   cvData.cvEmail2Box    = doc.getElementById("cvEmail2Box");
+   cvData.cvEmail2      = doc.getElementById("cvEmail2");
++  //Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur
++  cvData.cvEmail3Box    = doc.getElementById("cvEmail3Box");
++  cvData.cvEmail3      = doc.getElementById("cvEmail3");
++  //fin Bug mantis 0002625
+   // Home section
+   cvData.cvbHome      = doc.getElementById("cvbHome");
+   cvData.cvhHome      = doc.getElementById("cvhHome");
+@@ -235,6 +245,11 @@
+    visible = HandleLink(data.cvEmail2, zSecondaryEmail,
+                         card.getProperty("SecondEmail"), data.cvEmail2Box,
+                         "mailto:" + card.getProperty("SecondEmail")) || visible;
++  //Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur
++  visible = HandleLink(data.cvEmail3, zThirdEmail,
++                        card.getProperty("ThirdEmail"), data.cvEmail3Box,
++                        "mailto:" + card.getProperty("ThirdEmail")) || visible;
++  //fin Bug mantis 0002625
+ 
+    // Home section
+    visible = cvSetNode(data.cvHomeAddress, card.getProperty("HomeAddress"));
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul b/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul
+--- a/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul
++++ b/comm-esr60/comm/mail/components/addrbook/content/addressbook.xul
+@@ -807,6 +807,10 @@
+                     <description class="CardViewLink" id="cvEmail2Box">
+                       <html:a href="" id="cvEmail2"/>
+                     </description>
++                  <!-- mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur -->
++                  <description class="CardViewLink" id="cvEmail3Box">
++                    <html:a href="" id="cvEmail3"/>
++                  </description>
+                   </vbox>
+                   <vbox id="cvbHome" class="cardViewGroup">
+                     <description class="CardViewHeading" id="cvhHome">&home.heading;</description>
+diff --git a/comm-esr60/comm/mail/themes/linux/mail/addrbook/cardDialog.css b/comm-esr60/comm/mail/themes/linux/mail/addrbook/cardDialog.css
+--- a/comm-esr60/comm/mail/themes/linux/mail/addrbook/cardDialog.css
++++ b/comm-esr60/comm/mail/themes/linux/mail/addrbook/cardDialog.css
+@@ -12,8 +12,9 @@
+ 
+ /* ::::: Card Edit dialog ::::: */
+ 
++/* Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur */
+ .CardEditWidth {
+-  width: 42ch;
++  width: 24ch;
+ }
+ 
+ .PhoneEditWidth {
+diff --git a/comm-esr60/comm/mail/themes/osx/mail/addrbook/cardDialog.css b/comm-esr60/comm/mail/themes/osx/mail/addrbook/cardDialog.css
+--- a/comm-esr60/comm/mail/themes/osx/mail/addrbook/cardDialog.css
++++ b/comm-esr60/comm/mail/themes/osx/mail/addrbook/cardDialog.css
+@@ -12,8 +12,9 @@
+ 
+ /* ::::: Card Edit dialog ::::: */
+ 
++/* Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur */
+ .CardEditWidth {
+-  width: 42ch;
++  width: 24ch;
+ }
+ 
+ .PhoneEditWidth {
+diff --git a/comm-esr60/comm/mail/themes/windows/mail/addrbook/cardDialog.css b/comm-esr60/comm/mail/themes/windows/mail/addrbook/cardDialog.css
+--- a/comm-esr60/comm/mail/themes/windows/mail/addrbook/cardDialog.css
++++ b/comm-esr60/comm/mail/themes/windows/mail/addrbook/cardDialog.css
+@@ -12,8 +12,9 @@
+ 
+ /* ::::: Card Edit dialog ::::: */
+ 
++/* Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur */
+ .CardEditWidth {
+-  width: 42ch;
++  width: 24ch;
+ }
+ 
+ .PhoneEditWidth {
+diff --git a/comm-esr60/comm/mailnews/addrbook/src/nsAbAutoCompleteSearch.js b/comm-esr60/comm/mailnews/addrbook/src/nsAbAutoCompleteSearch.js
+--- a/comm-esr60/comm/mailnews/addrbook/src/nsAbAutoCompleteSearch.js
++++ b/comm-esr60/comm/mailnews/addrbook/src/nsAbAutoCompleteSearch.js
+@@ -211,6 +211,12 @@
+           email = card.getProperty("SecondEmail", "");
+           if (email)
+             this._addToResult(commentColumn, directory, card, email, false, result);
++
++          //Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur
++          email = card.getProperty("ThirdEmail", "");
++          if (email)
++            this._addToResult(commentColumn, directory, card, email, false, result);
++          //fin Bug mantis 0002625
+         }
+       }
+     }
+diff --git a/fr-esr60/fr/mail/chrome/messenger/addressbook/abCard.dtd b/fr-esr60/fr/mail/chrome/messenger/addressbook/abCard.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/addressbook/abCard.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/addressbook/abCard.dtd
+@@ -36,10 +36,14 @@
+ <!ENTITY NickName.label                 "Surnom :">
+ <!ENTITY NickName.accesskey             "S">
+ 
+-<!ENTITY PrimaryEmail.label             "Adresse électronique :">
+-<!ENTITY PrimaryEmail.accesskey         "d">
+-<!ENTITY SecondEmail.label              "Adresse alternative :">
+-<!ENTITY SecondEmail.accesskey          "r">
++<!-- Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur -->
++<!ENTITY PrimaryEmail.label             "Courriel :">
++<!ENTITY PrimaryEmail.accesskey         "C">
++<!ENTITY SecondEmail.label              "Courriel 2 :">
++<!ENTITY SecondEmail.accesskey          "2">
++<!ENTITY ThirdEmail.label               "Courriel 3 :">
++<!ENTITY ThirdEmail.accesskey           "3">
++<!-- fin Bug mantis 0002625 -->
+ <!ENTITY PreferMailFormat.label         "Préfère recevoir les messages au format :">
+ <!ENTITY PreferMailFormat.accesskey     "v">
+ <!ENTITY PlainText.label                "Texte simple (sans HTML)">
+diff --git a/fr-esr60/fr/mail/chrome/messenger/addressbook/abMainWindow.dtd b/fr-esr60/fr/mail/chrome/messenger/addressbook/abMainWindow.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/addressbook/abMainWindow.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/addressbook/abMainWindow.dtd
+@@ -189,16 +189,22 @@
+ <!ENTITY Addrbook.accesskey                             "a">
+ <!ENTITY GeneratedName.label                            "Nom">
+ <!ENTITY GeneratedName.accesskey                        "N">
+-<!ENTITY PrimaryEmail.label                             "Adresse électronique">
+-<!ENTITY PrimaryEmail.accesskey                         "d">
++<!-- Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur -->
++<!ENTITY PrimaryEmail.label                             "Courriel">
++<!ENTITY PrimaryEmail.accesskey                         "C">
++<!-- fin Bug mantis 0002625 -->
+ <!ENTITY ChatName.label                                 "Pseudo IM">
+ <!ENTITY ChatName.accesskey                             "o">
+ <!ENTITY Company.label                                  "Société">
+ <!ENTITY Company.accesskey                              "s">
+ <!ENTITY NickName.label                                 "Surnom">
+ <!ENTITY NickName.accesskey                             "u">
+-<!ENTITY SecondEmail.label                              "Adresse alternative">
+-<!ENTITY SecondEmail.accesskey                          "r">
++<!-- Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur -->
++<!ENTITY SecondEmail.label                              "Courriel 2">
++<!ENTITY SecondEmail.accesskey                          "2">
++<!ENTITY ThirdEmail.label                               "Courriel 3">
++<!ENTITY ThirdEmail.accesskey                           "3">
++<!-- fin Bug mantis 0002625 -->
+ <!ENTITY Department.label                               "Service">
+ <!ENTITY Department.accesskey                           "e">
+ <!ENTITY JobTitle.label                                 "Fonction">
+diff --git a/fr-esr60/fr/mail/chrome/messenger/addressbook/abResultsPaneOverlay.dtd b/fr-esr60/fr/mail/chrome/messenger/addressbook/abResultsPaneOverlay.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/addressbook/abResultsPaneOverlay.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/addressbook/abResultsPaneOverlay.dtd
+@@ -6,16 +6,22 @@
+ <!ENTITY Addrbook.accesskey                    "C">
+ <!ENTITY GeneratedName.label                   "Nom">
+ <!ENTITY GeneratedName.accesskey               "N">
+-<!ENTITY PrimaryEmail.label                    "Adresse électronique">
+-<!ENTITY PrimaryEmail.accesskey                "e">
++<!-- Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur -->
++<!ENTITY PrimaryEmail.label                    "Courriel">
++<!ENTITY PrimaryEmail.accesskey                "C">
++<!-- fin Bug mantis 0002625 -->
+ <!ENTITY Company.label                         "Société">
+ <!ENTITY Company.accesskey                     "i">
+ <!ENTITY _PhoneticName.label                   "Nom phonétique">
+ <!ENTITY _PhoneticName.accesskey               "o">
+ <!ENTITY NickName.label                        "Surnom">
+ <!ENTITY NickName.accesskey                    "s">
+-<!ENTITY SecondEmail.label                     "Adresse alternative">
+-<!ENTITY SecondEmail.accesskey                 "d">
++<!-- Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur -->
++<!ENTITY SecondEmail.label                     "Courriel 2">
++<!ENTITY SecondEmail.accesskey                 "2">
++<!ENTITY ThirdEmail.label                      "Courriel 3">
++<!ENTITY ThirdEmail.accesskey                  "3">
++<!-- fin Bug mantis 0002625 -->
+ <!ENTITY Department.label                      "Service">
+ <!ENTITY Department.accesskey                  "r">
+ <!ENTITY JobTitle.label                        "Fonction">
+diff --git a/fr-esr60/fr/mail/chrome/messenger/addressbook/addressBook.properties b/fr-esr60/fr/mail/chrome/messenger/addressbook/addressBook.properties
+--- a/fr-esr60/fr/mail/chrome/messenger/addressbook/addressBook.properties
++++ b/fr-esr60/fr/mail/chrome/messenger/addressbook/addressBook.properties
+@@ -120,9 +120,12 @@
+ #          • My Collecting Addressbook
+ confirmDeleteThisCollectionAddressbook=Si ce carnet d’adresses est supprimé, #2 ne collectera plus d’adresses. Voulez-vous vraiment supprimer ce carnet d’adresses et tous les contacts qu’il contient ?\n• #1
+ 
+-propertyPrimaryEmail=Adresse électronique
++#Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur
++propertyPrimaryEmail=Courriel
+ propertyListName=Nom de la liste
+-propertySecondaryEmail=Adresse alternative
++propertySecondaryEmail=Courriel 2
++propertyThirdEmail=Courriel 3
++#fin Bug mantis 0002625
+ propertyNickname=Surnom
+ propertyDisplayName=Nom à afficher
+ propertyWork=Travail
+diff --git a/fr-esr60/fr/mail/chrome/messenger/search-attributes.properties b/fr-esr60/fr/mail/chrome/messenger/search-attributes.properties
+--- a/fr-esr60/fr/mail/chrome/messenger/search-attributes.properties
++++ b/fr-esr60/fr/mail/chrome/messenger/search-attributes.properties
+@@ -21,8 +21,10 @@
+ DisplayName=Nom affiché
+ Nickname=Surnom
+ ScreenName=Nom à l’écran
+-Email=Adresse électronique
+-AdditionalEmail=Autre adresse électronique
++# mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur
++Email=Courriel
++AdditionalEmail=Courriel 2
++# fin mantis 0002625
+ AnyNumber=N’importe quel numéro
+ WorkPhone=Téléphone professionnel
+ HomePhone=Téléphone privé

@@ -1,0 +1,32 @@
+# HG changeset patch
+# User pm
+# Date 1466586038 -7200
+#      Wed Jun 22 11:00:38 2016 +0200
+# Node ID d8a8676364b8a3774b0d4f6e1236f75701782a0a
+# Parent  82d7c6a740a19b4bc0334df1dba0307408451116
+Ticket mantis 0004270: Les modifications et/ou suppressions de contacts distants ne sont pas remontees a partir de la racine des carnets
+
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abTrees.js b/comm-esr60/comm/mail/components/addrbook/content/abTrees.js
+--- a/comm-esr60/comm/mail/components/addrbook/content/abTrees.js
++++ b/comm-esr60/comm/mail/components/addrbook/content/abTrees.js
+@@ -196,11 +196,18 @@
+     this._rowMap = [];
+ 
+     var dirEnum = MailServices.ab.directories;
++    
++    //Bug mantis 0004270: Les modifications et/ou suppressions de contacts distants ne sont pas remontées à partir de la racine des carnets
+ 
+     // Make an entry for All Address Books.
+-    let rootAB = MailServices.ab.getDirectory(kAllDirectoryRoot + "?");
++    /*let rootAB = MailServices.ab.getDirectory(kAllDirectoryRoot + "?");
+     rootAB.dirName = gAddressBookBundle.getString("allAddressBooks");
+-    this._rowMap.push(new abDirTreeItem(rootAB));
++    this._rowMap.push(new abDirTreeItem(rootAB));*/
++    
++    while (dirEnum.hasMoreElements()) {
++      this._rowMap.push(new abDirTreeItem(dirEnum.getNext().QueryInterface(Components.interfaces.nsIAbDirectory)));
++    }
++    //fin mantis 0004270
+ 
+     // Sort our addressbooks now
+     this._rowMap.sort(abSort);

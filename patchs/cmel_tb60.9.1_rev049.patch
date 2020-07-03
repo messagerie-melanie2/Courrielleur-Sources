@@ -1,0 +1,36 @@
+# HG changeset patch
+# User pm
+# Date 1457965069 -3600
+#      Mon Mar 14 15:17:49 2016 +0100
+# Node ID 648c42242c0375d07ec8affb32cae7b1b595d57c
+# Parent  381e6b36627a8282ca148076baeb2b20bc056a3d
+Ticket mantis 0002016: L'etiquette 'Commente' disparait de la colonne Etiquettes si on supprime les etiquettes placees par la saisie '0'
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+@@ -836,13 +836,20 @@
+                    .createInstance(Ci.nsIMutableArray);
+   let tagArray = MailServices.tags.getAllTags({});
+ 
++  //cm2 ~commente (mantis 2016)
+   var allKeys = "";
+-  for (var j = 0; j < tagArray.length; ++j)
++  for (var j = 0, e = 0; j < tagArray.length; ++j)
+   {
+-    if (j)
+-      allKeys += " ";
+-    allKeys += tagArray[j].key;
++    var cle=tagArray[j].key;
++    if ("~commente"==cle)
++      continue;    
++    if (e)
++      allKeys += " ";    
++    allKeys += cle;
++    //allKeys += tagArray[j].key;
++    e++;
+   }
++  //fin cm2 ~commente (mantis 2016)
+ 
+   var prevHdrFolder = null;
+   // this crudely handles cross-folder virtual folders with selected messages

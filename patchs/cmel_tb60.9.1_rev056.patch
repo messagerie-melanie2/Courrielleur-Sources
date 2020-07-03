@@ -1,0 +1,71 @@
+# HG changeset patch
+# User pm
+# Date 1414660392 -3600
+#      Thu Oct 30 10:13:12 2014 +0100
+# Node ID f3c63bb7dca02486a067617372944fcd92ebf34f
+# Parent  aa57bd46c27748367fb9690effd18eee75921e9e
+Ticket mantis 0002984 : Detection de l'envoi d'un trop message pour rediriger l’utilisateur vers Melanissimo
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -3490,8 +3490,11 @@
+     }
+     msgWindow.domWindow = window;
+     msgWindow.rootDocShell.allowAuth = true;
+-    gMsgCompose.SendMsg(msgType, getCurrentIdentity(),
+-                        getCurrentAccountKey(), msgWindow, progress);
++    //bug mantis 2984 (envoi melanissimo) - fontion de capture des envois
++    /*gMsgCompose.SendMsg(msgType, getCurrentIdentity(),
++                        getCurrentAccountKey(), msgWindow, progress);*/
++    M2ssimoSendMsg(gMsgCompose, msgType, getCurrentIdentity(), 
++                    getCurrentAccountKey(), msgWindow, progress);
+   }
+   catch (ex) {
+     Cu.reportError("GenericSendMessage FAILED: " + ex);
+@@ -3510,6 +3513,45 @@
+   return (aAddress.includes("@", 1) && !aAddress.endsWith("@"));
+ }
+ 
++/* fonction de capture d'envoi du message pour le module melanissimmo
++  remplace la ligne gMsgCompose.SendMsg(msgType,..
++  dans la fonction GenericSendMessage
++  les parametres de la fonction sont les memes que l'appel gMsgCompose.SendMsg + gMsgCompose=> msgcompose
++*/
++function M2ssimoSendMsg(msgcompose, msgtype, identite, compte, msgwindow, progress) {
++
++  //verifier que le module cm2m2ssimo est operationnel
++  let m2ssimo=false;
++
++  try{
++    m2ssimo=Services.prefs.getBoolPref("melanissimo.module");
++  } catch(ex){
++    m2ssimo=false;
++  }
++
++  if (!m2ssimo) {
++    //comportement par defaut
++    msgcompose.SendMsg(msgtype, identite, compte, msgwindow, progress);
++    return;
++  }
++
++  //envoi par Thunderbird possible?
++  let envoi=m2sCanSendByTB(msgcompose, msgtype, identite, compte);
++  m2sTrace("M2ssimoSendMsg m2sCanSendByTB:"+(envoi?"oui":"non"));
++  if (envoi){
++    //comportement par defaut
++    m2sTrace("M2ssimoSendMsg envoi par Thunderbird (standard)");
++    m2sEcritLog(M2S_LOGS_MODULE, "Envoi standard par Thunderbird");
++    msgcompose.SendMsg(msgtype, identite, compte, msgwindow, progress);
++
++  } else {
++    //envoi melanissimo si possible
++    m2sTrace("M2ssimoSendMsg traitement par module d'envoi melanissimo");
++    m2sEcritLog(M2S_LOGS_MODULE, "Traitement par module d'envoi melanissimo");
++    m2sEnvoiMelanissimo(msgcompose, msgtype, identite, compte, msgwindow, progress);
++  }
++}
++
+ /**
+  * Keep the Send buttons disabled until any recipient is entered.
+  */

@@ -1,0 +1,40 @@
+# HG changeset patch
+# User pm
+# Date 1554820378 -7200
+#      Tue Apr 09 16:32:58 2019 +0200
+# Node ID c406c39850a98966e5097b0e1e9656fcd0422f48
+# Parent  28ed7f2753da424d39c1c96ceab5dc3b15b4d12b
+Ticket mantis 0005129: Amélioration du comportement lors d'erreur imaps dans un contexte de fenêtre de composition (compléments)
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -3245,8 +3245,7 @@
+ function GenericSendMessage(msgType)
+ {
+   // mantis 5129
+-  if ((nsIMsgCompDeliverMode.SaveAsDraft==msgType ||
+-      nsIMsgCompDeliverMode.AutoSaveAsDraft==msgType) &&
++  if (nsIMsgCompDeliverMode.AutoSaveAsDraft==msgType &&
+       !Services.io.offline){
+ 
+     function rappel(){
+@@ -3261,6 +3260,8 @@
+       }
+       
+       GenericSendMessageTB(msgType);
++      
++      return;
+     }
+ 
+     // si le dossier de l'emetteur est du type imap => test de connexion
+@@ -4457,7 +4458,8 @@
+         // gets off by one and the app can close unexpectedly on os's that
+         // shutdown the app when the last window is closed.
+         try {
+-          GenericSendMessage(nsIMsgCompDeliverMode.AutoSaveAsDraft);
++          // mantis 5129
++          GenericSendMessageTB(nsIMsgCompDeliverMode.AutoSaveAsDraft);
+         }
+         catch (ex) {
+           Cu.reportError(ex);

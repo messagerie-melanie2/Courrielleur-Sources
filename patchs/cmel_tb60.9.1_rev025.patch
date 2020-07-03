@@ -1,0 +1,43 @@
+# HG changeset patch
+# User pm
+# Date 1526633042 -7200
+#      Fri May 18 10:44:02 2018 +0200
+# Node ID 15eb7924f18a17f87e6d092b4d900e36de698b16
+# Parent  5833c3505061f322a946a9801b848d3d83f32bb5
+Ticket mantis 0002808: Parametrage de l'indicateur de quotas
+
+diff --git a/comm-esr60/comm/mail/themes/shared/mail/mailWindow1.css b/comm-esr60/comm/mail/themes/shared/mail/mailWindow1.css
+--- a/comm-esr60/comm/mail/themes/shared/mail/mailWindow1.css
++++ b/comm-esr60/comm/mail/themes/shared/mail/mailWindow1.css
+@@ -122,7 +122,7 @@
+ 
+ #quotaPanel .progress-bar {
+   -moz-appearance: none;
+-  background-color: #88AAFF;
++  background-color: #00FF80;
+   opacity: .5;
+ }
+ 
+@@ -137,4 +137,4 @@
+ 
+ #quotaLabel {
+   text-align: center;
+-}
+\ No newline at end of file
++}
+diff --git a/comm-esr60/comm/mailnews/mailnews.js b/comm-esr60/comm/mailnews/mailnews.js
+--- a/comm-esr60/comm/mailnews/mailnews.js
++++ b/comm-esr60/comm/mailnews/mailnews.js
+@@ -708,9 +708,9 @@
+ 
+ pref("mail.imap.use_status_for_biff", true);
+ 
+-pref("mail.quota.mainwindow_threshold.show", 75); // in percent. when the quota meter starts showing up at all. decrease this for it to be more than a warning.
+-pref("mail.quota.mainwindow_threshold.warning", 80); // when it gets yellow
+-pref("mail.quota.mainwindow_threshold.critical", 95); // when it gets red
++pref("mail.quota.mainwindow_threshold.show", 0); // in percent. when the quota meter starts showing up at all. decrease this for it to be more than a warning.
++pref("mail.quota.mainwindow_threshold.warning", 75); // when it gets orange
++pref("mail.quota.mainwindow_threshold.critical", 90); // when it gets red
+ 
+ // Pref controlling the updates on the pre-configured accounts.
+ // In order to add new pre-configured accounts (after a version),

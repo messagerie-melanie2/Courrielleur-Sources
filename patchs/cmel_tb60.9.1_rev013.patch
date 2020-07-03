@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1526572626 -7200
+#      Thu May 17 17:57:06 2018 +0200
+# Node ID 53ec7de55b29ec49cecfc814a641e553a2b9afef
+# Parent  2fbf37df724a966fa835ad63977d11d93b8d2eaa
+Ticket mantis 0002845 - Option de menu A propos de Courrielleur
+
+diff --git a/comm-esr60/comm/mail/base/content/helpMenu.inc b/comm-esr60/comm/mail/base/content/helpMenu.inc
+--- a/comm-esr60/comm/mail/base/content/helpMenu.inc
++++ b/comm-esr60/comm/mail/base/content/helpMenu.inc
+@@ -28,7 +28,7 @@
+ #ifndef XP_MACOSX
+           <menuseparator id="aboutSeparator"/>
+ #endif
+-          <menuitem id="aboutName"
++          <menuitem id="aboutName" hidden="true"
+                     label="&aboutMenuCmd2.label;"
+                     accesskey="&aboutMenuCmd2.accesskey;"
+                     oncommand="openAboutDialog();"/>

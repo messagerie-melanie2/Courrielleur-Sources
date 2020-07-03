@@ -1,0 +1,68 @@
+# HG changeset patch
+# User pm
+# Date 1564670059 -7200
+#      Thu Aug 01 16:34:19 2019 +0200
+# Node ID 84cd1ba708a47094a7d807fdd9e6fc9d8d9af6c1
+# Parent  3cf41eb0cc44241978673f9ad85d178f287bd1ca
+Ticket mantis 0005306: Emetteur d'un message dans le courrielleur basé sur Thunderbird 60
+
+diff --git a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+--- a/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
++++ b/comm-esr60/comm/mail/components/compose/content/MsgComposeCommands.js
+@@ -2837,9 +2837,25 @@
+       }
+     }
+   }
++  
++  // Ticket mantis 0005306: Emetteur d'un message dans le courrielleur basé sur Thunderbird 60
++  if (params) {
++    
++    let origMsgHdr=params.origMsgHdr;
++    
++    if (origMsgHdr && origMsgHdr.folder){
++
++      let ident=GetDefaultIdentityForMsgHdr(origMsgHdr);
++
++      if (ident)
++        params.identity=ident;
++    }
++  }
++  // fin Ticket mantis 0005306
+ 
+   gComposeType = params.type;
+ 
++  /* remplace par ticket 5306
+   // Detect correct identity when missing or mismatched.
+   // An identity with no email is likely not valid.
+   // When editing a draft, 'params.identity' is pre-populated with the identity
+@@ -2891,10 +2907,12 @@
+         (suitableCount == 0 && !emailSimilar(from, params.identity.email))))
+       gComposeNotificationBar.setIdentityWarning(params.identity.identityName);
+   }
++  */
+ 
+   identityList.selectedItem =
+     identityList.getElementsByAttribute("identitykey", params.identity.key)[0];
+     
++  /* remplace par ticket 5306
+   // mantis 2749 Emetteur par défaut d'un message émis depuis le dossier modèle
+   // mantis 0004983: Expéditeur non modifié lors du déplacement d'1 message dans une autre boîte
+   let origMsgHdr=params.origMsgHdr;
+@@ -2906,7 +2924,8 @@
+       identityList.selectedItem=identityList.getElementsByAttribute("identitykey", ident.key)[0];
+   }
+   //fin mantis 2749  (+ else)      
+-
++  */
++  /* remplace par ticket 5306
+   // Here we set the From from the original message, be it a draft or another
+   // message, for example a template, we want to "edit as new".
+   // Only do this if the message is our own draft or template.
+@@ -2919,6 +2938,7 @@
+       identityList.value = from;
+     }
+   }
++  */
+   LoadIdentity(true);
+ 
+   // Get the <editor> element to startup an editor

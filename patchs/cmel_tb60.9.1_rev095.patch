@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1534168298 -7200
+#      Mon Aug 13 15:51:38 2018 +0200
+# Node ID 1d1db81e9e3f44f74db3c2f1172591d75e34f5d4
+# Parent  d6efebc6a74d04b2493b8ef0f92a8ea6e57b2067
+Ticket mantis 0004135: Traces incontournables avec uid, version et starttime du courrielleur
+
+diff --git a/comm-esr60/toolkit/modules/UpdateUtils.jsm b/comm-esr60/toolkit/modules/UpdateUtils.jsm
+--- a/comm-esr60/toolkit/modules/UpdateUtils.jsm
++++ b/comm-esr60/toolkit/modules/UpdateUtils.jsm
+@@ -99,6 +99,8 @@
+           return getDistributionPrefValue(PREF_APP_DISTRIBUTION);
+         case "DISTRIBUTION_VERSION":
+           return getDistributionPrefValue(PREF_APP_DISTRIBUTION_VERSION);
++        case "CM2_VERSION":
++          return Services.prefs.getStringPref("courrielleur.version", "");
+       }
+       return match;
+     }).replace(/\+/g, "%2B");

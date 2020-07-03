@@ -1,0 +1,32 @@
+# HG changeset patch
+# User pm
+# Date 1526568747 -7200
+#      Thu May 17 16:52:27 2018 +0200
+# Node ID 16c9bf63c03b96b207ec52cea02ef8d8b9f56844
+# Parent  29ddb46094f07de371ab1b5f0e2cc3ce8150667b
+Icone de l'option de menu carnet d'adresses
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+@@ -3046,6 +3046,8 @@
+                   label="&addressBookCmd.label;"
+                   accesskey="&addressBookCmd.accesskey;"
+                   key="key_addressbook"
++                  image="chrome://messenger/skin/addressbook/icons/addrbook.png"
++                  class="menuitem-iconic"
+                   oncommand="toOpenWindowByType('mail:addressbook', 'chrome://messenger/content/addressbook/addressbook.xul');"/>
+         <menuseparator id="devToolsSeparator"/>
+ #endif
+diff --git a/comm-esr60/comm/mail/components/compose/content/messengercompose.xul b/comm-esr60/comm/mail/components/compose/content/messengercompose.xul
+--- a/comm-esr60/comm/mail/components/compose/content/messengercompose.xul
++++ b/comm-esr60/comm/mail/components/compose/content/messengercompose.xul
+@@ -914,6 +914,8 @@
+                       label="&addressBookCmd.label;"
+                       accesskey="&addressBookCmd.accesskey;"
+                       key="key_addressbook"
++                      image="chrome://messenger/skin/addressbook/icons/addrbook.png"
++                      class="menuitem-iconic"
+                       oncommand="toAddressBook();"/>
+ #endif
+ 

@@ -1,0 +1,83 @@
+# HG changeset patch
+# User pm
+# Date 1526651837 -7200
+#      Fri May 18 15:57:17 2018 +0200
+# Node ID aa57bd46c27748367fb9690effd18eee75921e9e
+# Parent  58cb50ddf5c3b81fc31ea6cbbff1d816996cc2d0
+Ticket mantis 0002862 - Les champs de la boite d'edition d'un contact sont mal affiches
+
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCard.inc b/comm-esr60/comm/mail/components/addrbook/content/abCard.inc
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCard.inc
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCard.inc
+@@ -159,7 +159,7 @@
+               <spacer flex="1"/>
+               <label class="text-link" value="&chatName.label;"
+                      onclick="showChat();"/>
+-              <hbox class="CardEditWidth">
++              <hbox class="PhoneEditWidth">
+                 <textbox id="ChatName" readonly="true" flex="1"
+                          onclick="showChat();"/>
+               </hbox>
+diff --git a/comm-esr60/comm/mail/themes/linux/mail/addrbook/cardDialog.css b/comm-esr60/comm/mail/themes/linux/mail/addrbook/cardDialog.css
+--- a/comm-esr60/comm/mail/themes/linux/mail/addrbook/cardDialog.css
++++ b/comm-esr60/comm/mail/themes/linux/mail/addrbook/cardDialog.css
+@@ -14,7 +14,7 @@
+ 
+ /* Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur */
+ .CardEditWidth {
+-  width: 24ch;
++  width: 42ch;
+ }
+ 
+ .PhoneEditWidth {
+@@ -22,7 +22,7 @@
+ }
+ 
+ .AddressCardEditWidth {
+-  width: 72ch;
++  width: 84ch;
+ }
+ 
+ .YearWidth {
+diff --git a/comm-esr60/comm/mail/themes/osx/mail/addrbook/cardDialog.css b/comm-esr60/comm/mail/themes/osx/mail/addrbook/cardDialog.css
+--- a/comm-esr60/comm/mail/themes/osx/mail/addrbook/cardDialog.css
++++ b/comm-esr60/comm/mail/themes/osx/mail/addrbook/cardDialog.css
+@@ -14,7 +14,7 @@
+ 
+ /* Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur */
+ .CardEditWidth {
+-  width: 24ch;
++  width: 42ch;
+ }
+ 
+ .PhoneEditWidth {
+@@ -22,7 +22,7 @@
+ }
+ 
+ .AddressCardEditWidth {
+-  width: 72ch;
++  width: 84ch;
+ }
+ 
+ .YearWidth {
+diff --git a/comm-esr60/comm/mail/themes/windows/mail/addrbook/cardDialog.css b/comm-esr60/comm/mail/themes/windows/mail/addrbook/cardDialog.css
+--- a/comm-esr60/comm/mail/themes/windows/mail/addrbook/cardDialog.css
++++ b/comm-esr60/comm/mail/themes/windows/mail/addrbook/cardDialog.css
+@@ -14,7 +14,7 @@
+ 
+ /* Bug mantis 0002625: Passer a 3 le nombre d'adresse mail gerees pas le Courrielleur */
+ .CardEditWidth {
+-  width: 24ch;
++  width: 42ch;
+ }
+ 
+ .PhoneEditWidth {
+@@ -22,7 +22,7 @@
+ }
+ 
+ .AddressCardEditWidth {
+-  width: 72ch;
++  width: 84ch;
+ }
+ 
+ .YearWidth {

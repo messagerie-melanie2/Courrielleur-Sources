@@ -1,0 +1,23 @@
+# HG changeset patch
+# User pm
+# Date 1567583602 -7200
+#      Wed Sep 04 09:53:22 2019 +0200
+# Node ID 077a015930189c90f04fa4ffa90b9d86407b94d2
+# Parent  79a37d609bf197d180587256219f5f8d0b2824cb
+Ticket mantis 0005374: Démarrage contrôlé des services courrielleur
+
+diff --git a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+--- a/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
++++ b/comm-esr60/comm/mail/base/content/msgMail3PaneWindow.js
+@@ -511,8 +511,10 @@
+   // verifyAccounts returns true if the callback won't be called
+   // We also don't want the account wizard to open if any sort of account exists
+   //if (verifyAccounts(LoadPostAccountWizard, false, AutoConfigWizard))
+-  if (verifyAccounts(LoadPostAccountWizard, false, cm2ExecPacome))
++  if (verifyAccounts(LoadPostAccountWizard, false, cm2ExecPacome)){
++    pacomeDemarre();
+     LoadPostAccountWizard();
++  }
+ 
+   // Set up the summary frame manager to handle loading pages in the
+   // multi-message pane

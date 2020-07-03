@@ -1,0 +1,89 @@
+# HG changeset patch
+# User pm
+# Date 1526564594 -7200
+#      Thu May 17 15:43:14 2018 +0200
+# Node ID efabfbcfaa0efc354be14c77d39aa2491db24d5d
+# Parent  80d8135fa7797f190d512eb74ba020d68be80737
+Ticket mantis 0002453: support des carnets en lecture seule
+
+diff --git a/comm-esr60/comm/mail/components/addrbook/content/abCard.js b/comm-esr60/comm/mail/components/addrbook/content/abCard.js
+--- a/comm-esr60/comm/mail/components/addrbook/content/abCard.js
++++ b/comm-esr60/comm/mail/components/addrbook/content/abCard.js
+@@ -287,7 +287,22 @@
+   {
+     if ("abURI" in window.arguments[0]) {
+       var abURI = window.arguments[0].abURI;
+-      var directory = GetDirectoryFromURI(abURI);
++      
++      // mantis 0002453: Support des carnets en lecture seule
++      //cas racine des carnets
++      var directory=null;
++      if ((kAllDirectoryRoot + "?")==abURI){      
++        var dirId=gEditCard.card.directoryId;  
++        if (dirId.length){
++          var pos=dirId.indexOf("&");
++          if (-1!=pos)
++            dirId=dirId.substr(0, pos);         
++          directory=MailServices.ab.getDirectoryFromId(dirId);         
++        }
++      }
++      if (null==directory)
++        directory = GetDirectoryFromURI(abURI);
++      //fin cas racine des carnets
+ 
+       if (directory.readOnly)
+       {
+diff --git a/comm-esr60/comm/mailnews/addrbook/src/nsAbDirProperty.cpp b/comm-esr60/comm/mailnews/addrbook/src/nsAbDirProperty.cpp
+--- a/comm-esr60/comm/mailnews/addrbook/src/nsAbDirProperty.cpp
++++ b/comm-esr60/comm/mailnews/addrbook/src/nsAbDirProperty.cpp
+@@ -444,6 +444,50 @@
+   // Default is that we are writable. Any implementation that is read-only must
+   // override this method.
+   *aReadOnly = false;
++  
++  //cm2 - Bug mantis 2453 : support des carnets en lecture seule
++  bool readOnly;
++  
++  //cm2 - cas liste
++  bool isMailList;
++  nsresult rv=this->GetIsMailList(&isMailList);
++  NS_ENSURE_SUCCESS(rv, rv);
++  
++  if (PR_TRUE==isMailList) {
++    
++    //rechercher carnet    
++    nsCString uriParent;
++    
++    rv=GetURI(uriParent);
++    NS_ENSURE_SUCCESS(rv, rv);
++       
++    int pos=uriParent.RFindChar('/');
++    if (pos==-1) {
++      *aReadOnly = false;
++      return NS_OK;
++    }
++
++    uriParent=StringHead(uriParent, pos);
++    
++    nsCOMPtr<nsIAbManager> abManager(do_GetService(NS_ABMANAGER_CONTRACTID, &rv));
++    NS_ENSURE_SUCCESS(rv, rv);
++    
++    nsCOMPtr<nsIAbDirectory> directory;
++    rv=abManager->GetDirectory(uriParent, getter_AddRefs(directory));
++    NS_ENSURE_SUCCESS(rv, rv);
++    
++    rv=directory->GetBoolValue("readonly", false, &readOnly);
++    NS_ENSURE_SUCCESS(rv, rv);
++  
++  } else {
++    rv = GetBoolValue("readonly", false, &readOnly);
++    NS_ENSURE_SUCCESS(rv, rv);
++  }
++
++  if (readOnly)
++    *aReadOnly = true;
++  //fin cm2 - Bug mantis 2453 : support des carnets en lecture seule
++  
+   return NS_OK;
+ }
+ 

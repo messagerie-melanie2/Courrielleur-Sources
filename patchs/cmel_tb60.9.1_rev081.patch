@@ -1,0 +1,61 @@
+# HG changeset patch
+# User pm
+# Date 1527090930 -7200
+#      Wed May 23 17:55:30 2018 +0200
+# Node ID 5486ca0c63ee2155b0f94a92af7301e0d06cd178
+# Parent  4d5b2801bf5dae441e69392dc2aeaa96cec25e61
+Ticket mantis 0004544: Perte d'un contact suite a sa creation
+
+diff --git a/comm-esr60/comm/mail/base/content/editContactOverlay.js b/comm-esr60/comm/mail/base/content/editContactOverlay.js
+--- a/comm-esr60/comm/mail/base/content/editContactOverlay.js
++++ b/comm-esr60/comm/mail/base/content/editContactOverlay.js
+@@ -241,16 +241,35 @@
+           cardbook.setProperty("PreferDisplayName", true);
+         } 
+         
++        if (isGroupdavDirectory(abURI)){
++          let oldDavVersion = cardbook.getProperty("groupDavVersion", "-1");
++          cardbook.setProperty("groupDavVersion", "-1");
++          cardbook.setProperty("groupDavVersionPrev", oldDavVersion);
++        } 
++
+         this._cardDetails.book.modifyCard(cardbook);
+         
+       } else {
+             
+-        // Add it to the chosen address book...             
++        // Add it to the chosen address book...           
++        if (isGroupdavDirectory(abURI)){
++          let oldDavVersion = this._cardDetails.card.getProperty("groupDavVersion", "-1");
++          this._cardDetails.card.setProperty("groupDavVersion", "-1");
++          this._cardDetails.card.setProperty("groupDavVersionPrev", oldDavVersion);
++        }        
+         this._cardDetails.book.addCard(this._cardDetails.card);  
+              
+       }      
+ 
+       // ...and delete it from the old place.
++      if (isGroupdavDirectory(originalBook.URI)){       
++        let prefService=new GroupdavPreferenceService(originalBook.dirPrefId);       
++        var key=this._cardDetails.card.getProperty("groupDavKey", null);
++        let href=prefService.getURL()+key;
++        let deleteOp = new sogoWebDAV(href, null, null, true);
++        deleteOp.delete();
++      }
++
+       let cardArray = Cc["@mozilla.org/array;1"].createInstance(Components.interfaces.nsIMutableArray);
+       var original=getCardFromBook(originalBook, cardEmail);    
+       cardArray.appendElement(original, false);
+@@ -264,6 +283,12 @@
+         this._cardDetails.card.setProperty("PreferDisplayName", true);
+       }
+       
++      if (isGroupdavDirectory(abURI)){
++        let oldDavVersion = this._cardDetails.card.getProperty("groupDavVersion", "-1");
++        this._cardDetails.card.setProperty("groupDavVersion", "-1");
++        this._cardDetails.card.setProperty("groupDavVersionPrev", oldDavVersion);
++      }
++      
+       this._cardDetails.book.modifyCard(this._cardDetails.card);
+     }
+ 

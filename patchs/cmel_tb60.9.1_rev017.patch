@@ -1,0 +1,26 @@
+# HG changeset patch
+# User pm
+# Date 1526629636 -7200
+#      Fri May 18 09:47:16 2018 +0200
+# Node ID d141f9f5121a5bde5d1d08c70ed3c7ba9e3473c2
+# Parent  428b5e1287ba3efd3d1d96131fe5218b907f0520
+Ticket mantis 0002986: Bouton Thunderbird 'Archiver' de la barre d'outils principale
+
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+@@ -3282,12 +3282,14 @@
+                  recentLabel="&moveCopyMsgRecentMenu.label;"
+                  recentAccessKey="&moveCopyMsgRecentMenu.accesskey;"/>
+     </toolbarbutton>
++    <!-- mantis 0002986: Bouton Thunderbird 'Archiver' de la barre d'outils principale
+     <toolbarbutton id="button-archive"
+                    class="toolbarbutton-1"
+                    label="&archiveButton.label;"
+                    tooltiptext="&archiveButton.tooltip;"
+                    observes="button_archive"
+                    oncommand="MsgArchiveSelectedMessages(event)"/>
++    -->
+     <toolbarbutton id="button-showconversation"
+                    class="toolbarbutton-1"
+                    label="&openConversationButton.label;"

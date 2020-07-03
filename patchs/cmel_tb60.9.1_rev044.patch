@@ -1,0 +1,22 @@
+# HG changeset patch
+# User pm
+# Date 1450876114 -3600
+#      Wed Dec 23 14:08:34 2015 +0100
+# Node ID 462de500079df225425151e17ba94416cf361e65
+# Parent  d4ca6aca98c89350d58b9951019cf0bd847c0a8e
+Correctif - Error in setting AccountCentral Items: TypeError: server is null (cm2 6.2T1)
+
+diff --git a/comm-esr60/comm/mailnews/base/content/msgAccountCentral.js b/comm-esr60/comm/mailnews/base/content/msgAccountCentral.js
+--- a/comm-esr60/comm/mailnews/base/content/msgAccountCentral.js
++++ b/comm-esr60/comm/mailnews/base/content/msgAccountCentral.js
+@@ -62,6 +62,10 @@
+ // of the given account
+ function ArrangeAccountCentralItems(server, msgFolder)
+ {
++    if (null==server){
++      return;
++    }
++    
+     let exceptions = [];
+     let protocolInfo = null;
+     try {

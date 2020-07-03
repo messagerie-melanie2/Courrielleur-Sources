@@ -1,0 +1,22 @@
+# HG changeset patch
+# User pm
+# Date 1526636762 -7200
+#      Fri May 18 11:46:02 2018 +0200
+# Node ID b276bcbf3b585cfc20bdd44409e5f87b97cd8485
+# Parent  1fe66b35260a751f8596a246e0a904b044e71c0c
+Ticket mantis 0003371: Modification du temps maximum d'execution des scripts
+
+diff --git a/comm-esr60/modules/libpref/init/all.js b/comm-esr60/modules/libpref/init/all.js
+--- a/comm-esr60/modules/libpref/init/all.js
++++ b/comm-esr60/modules/libpref/init/all.js
+@@ -3264,8 +3264,8 @@
+ pref("editor.positioning.offset",            0);
+ 
+ pref("dom.use_watchdog", true);
+-pref("dom.max_chrome_script_run_time", 20);
+-pref("dom.max_script_run_time", 10);
++pref("dom.max_chrome_script_run_time", 30);
++pref("dom.max_script_run_time", 30);
+ pref("dom.max_ext_content_script_run_time", 5);
+ 
+ // Stop all scripts in a compartment when the "stop script" dialog is used.

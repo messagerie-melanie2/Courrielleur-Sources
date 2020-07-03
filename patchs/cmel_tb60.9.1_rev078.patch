@@ -1,0 +1,20 @@
+# HG changeset patch
+# User pm
+# Date 1527082919 -7200
+#      Wed May 23 15:41:59 2018 +0200
+# Node ID dedba049278cf8ca993ab3d282d34b7af9e92689
+# Parent  e7121ac41bd5fa1195215e571349a906076b2fe4
+Ticket 0004430: renommer 'Aide sur le Courrielleur' par 'Aide Mélanie2'
+
+diff --git a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+@@ -17,7 +17,7 @@
+ <!ENTITY releaseCmd2.accesskey "N">
+ <!ENTITY whatsNewCmd.label "Nouveautés">
+ <!ENTITY whatsNewCmd.accesskey "o">
+-<!ENTITY openHelp.label "Rubriques d’aide">
++<!ENTITY openHelp.label "Aide Mélanie2">
+ <!ENTITY openHelp.accesskey "a">
+ <!ENTITY openHelp.commandkey "VK_F1">
+ <!ENTITY openHelpMac.label "Aide de &brandShortName;">

@@ -1,0 +1,42 @@
+# HG changeset patch
+# User pm
+# Date 1527067162 -7200
+#      Wed May 23 11:19:22 2018 +0200
+# Node ID 282b032a89038b16eac51499d58d415d83cfb95f
+# Parent  520cb8eb59797ce79140a05f3afad70d88de5fc0
+Ticket mantis 0003707 : Affichage de mise a jour sans droits d'installation
+
+diff --git a/comm-esr60/toolkit/mozapps/update/UpdateListener.jsm b/comm-esr60/toolkit/mozapps/update/UpdateListener.jsm
+--- a/comm-esr60/toolkit/mozapps/update/UpdateListener.jsm
++++ b/comm-esr60/toolkit/mozapps/update/UpdateListener.jsm
+@@ -199,7 +199,8 @@
+         break;
+       case "cant-apply":
+         this.clearCallbacks();
+-        this.showManualUpdateNotification(update, false);
++        // mantis 0003707 : Affichage de mise a jour sans droits d'installation
++        //this.showManualUpdateNotification(update, false);
+         break;
+     }
+   },
+diff --git a/comm-esr60/toolkit/mozapps/update/nsUpdateService.js b/comm-esr60/toolkit/mozapps/update/nsUpdateService.js
+--- a/comm-esr60/toolkit/mozapps/update/nsUpdateService.js
++++ b/comm-esr60/toolkit/mozapps/update/nsUpdateService.js
+@@ -2290,13 +2290,15 @@
+     }
+ 
+     if (!getCanApplyUpdates()) {
+-      LOG("UpdateService:_selectAndInstallUpdate - the user is unable to " +
++      //mantis 3707
++      Services.console.logStringMessage("pas de notification utilisateur pour une mise a jour courrielleur (non installable)");
++      /*LOG("UpdateService:_selectAndInstallUpdate - the user is unable to " +
+           "apply updates... prompting. Notifying observers. " +
+           "topic: update-available, status: cant-apply");
+ 
+       Services.obs.notifyObservers(null, "update-available", "cant-apply");
+       this._showPrompt(update);
+-      AUSTLMY.pingCheckCode(this._pingSuffix, AUSTLMY.CHK_UNABLE_TO_APPLY);
++      AUSTLMY.pingCheckCode(this._pingSuffix, AUSTLMY.CHK_UNABLE_TO_APPLY);*/
+       return;
+     }
+ 

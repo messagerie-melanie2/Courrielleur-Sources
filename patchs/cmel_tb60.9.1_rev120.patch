@@ -1,0 +1,51 @@
+# HG changeset patch
+# User pm
+# Date 1553532404 -3600
+#      Mon Mar 25 17:46:44 2019 +0100
+# Node ID 28ed7f2753da424d39c1c96ceab5dc3b15b4d12b
+# Parent  82a5c54050eb32ac4eb0b651869998acd541c78b
+Ticket mantis 0005263: Répertoire d'installation du Courrielleur Mél sans accent
+
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in b/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
+--- a/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
++++ b/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in
+@@ -25,6 +25,9 @@
+ !define BrandFullName         "Courrielleur Mél"
+ !endif
+ 
++# repertoire d'installation
++!define RepertoireInstall     "Courrielleur Mel"
++
+ !define CERTIFICATE_NAME            "Mozilla Corporation"
+ !define CERTIFICATE_ISSUER          "DigiCert SHA2 Assured ID Code Signing CA"
+ ; Changing the name or issuer requires us to have both the old and the new
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/installer.nsi b/comm-esr60/comm/mail/installer/windows/nsis/installer.nsi
+--- a/comm-esr60/comm/mail/installer/windows/nsis/installer.nsi
++++ b/comm-esr60/comm/mail/installer/windows/nsis/installer.nsi
+@@ -122,9 +122,9 @@
+ Name "${BrandFullName}"
+ OutFile "setup.exe"
+ !ifdef HAVE_64BIT_BUILD
+-  InstallDir "$PROGRAMFILES64\${BrandFullName}\"
++  InstallDir "$PROGRAMFILES64\${RepertoireInstall}\"
+ !else
+-  InstallDir "$PROGRAMFILES32\${BrandFullName}\"
++  InstallDir "$PROGRAMFILES32\${RepertoireInstall}\"
+ !endif
+ ShowInstDetails nevershow
+ 
+diff --git a/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi b/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
+--- a/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
++++ b/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
+@@ -119,9 +119,9 @@
+ Name "${BrandFullName}"
+ OutFile "helper.exe"
+ !ifdef HAVE_64BIT_BUILD
+-  InstallDir "$PROGRAMFILES64\${BrandFullName}\"
++  InstallDir "$PROGRAMFILES64\${RepertoireInstall}\"
+ !else
+-  InstallDir "$PROGRAMFILES32\${BrandFullName}\"
++  InstallDir "$PROGRAMFILES32\${RepertoireInstall}\"
+ !endif
+ ShowUnInstDetails nevershow
+ 

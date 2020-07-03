@@ -1,0 +1,22 @@
+# HG changeset patch
+# User pm
+# Date 1526568828 -7200
+#      Thu May 17 16:53:48 2018 +0200
+# Node ID bc00493242860798ddab3fc3af0ab877eef920c1
+# Parent  16c9bf63c03b96b207ec52cea02ef8d8b9f56844
+Ticket mantis 0001205: Reglage du filtre anti-spam pour la v3
+
+diff --git a/comm-esr60/comm/mailnews/mailnews.js b/comm-esr60/comm/mailnews/mailnews.js
+--- a/comm-esr60/comm/mailnews/mailnews.js
++++ b/comm-esr60/comm/mailnews/mailnews.js
+@@ -499,7 +499,9 @@
+ // in case client or server has bugs in compress implementation
+ pref("mail.server.default.use_compress_deflate", true);
+ // for spam
+-pref("mail.server.default.spamLevel", 100); // 0 off, 100 on.  not doing bool since we might have real levels one day.
++//Bug mantis 0001205: Reglage du filtre anti-spam pour la v3 
++pref("mail.server.default.spamLevel", 0); // 0 off, 100 on.  not doing bool since we might have real levels one day.
++//fin Bug mantis 0001205
+ pref("mail.server.default.moveOnSpam", false);
+ pref("mail.server.default.moveTargetMode", 0); // 0 == "Junk" on server, 1 == specific folder
+ pref("mail.server.default.spamActionTargetAccount", "");

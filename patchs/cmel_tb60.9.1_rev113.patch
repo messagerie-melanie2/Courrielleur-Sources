@@ -1,0 +1,342 @@
+# HG changeset patch
+# User pm
+# Date 1553523673 -3600
+#      Mon Mar 25 15:21:13 2019 +0100
+# Node ID 1bde4270654efa73f1893f4b6f35e08ae334a14d
+# Parent  ccccc854670498d7a3c4d9efbb767599e2fd16e8
+Ticket mantis 0005108: Evolution du menu contextuel de messages (thunderbird)
+
+diff --git a/comm-esr60/comm/mail/base/content/mail3PaneWindowCommands.js b/comm-esr60/comm/mail/base/content/mail3PaneWindowCommands.js
+--- a/comm-esr60/comm/mail/base/content/mail3PaneWindowCommands.js
++++ b/comm-esr60/comm/mail/base/content/mail3PaneWindowCommands.js
+@@ -390,8 +390,9 @@
+       case "button_archive":
+         return gFolderDisplay.canArchiveSelectedMessages;
+       case "cmd_markAsJunk":
++        return cm2CanMarkAsJunk();
+       case "cmd_markAsNotJunk":
+-        return gFolderDisplay.getCommandStatus(nsMsgViewCommandType.junk);
++        return cm2CanMarkAsUnjunk();   
+       case "cmd_recalculateJunkScore":
+         // We're going to take a conservative position here, because we really
+         // don't want people running junk controls on folders that are not
+@@ -1408,3 +1409,76 @@
+ 
+   return true;
+ }
++
++/* Mantis 0005108: Evolution du menu contextuel de messages
++  Dans le cas de messages courrier et si la commande est active, 
++  on testera l'état du message (marqué ou non) pour griser ou non.
++  Dans le cas d'une sélection multiple, si les messages n'ont pas tous le même état, 
++  les 2 commandes sont actives (idem marque lu/non lu).
++  S'ils sont tous marqués 'indésirable', commande indésirable inactive.
++  S'ils sont tous marqués 'acceptable', commande acceptable inactive.
++  => cm2CanMarkAsJunk/cm2CanMarkAsUnjunk
++*/
++function cm2CanMarkAsJunk(){
++
++  let mode=gFolderDisplay.getCommandStatus(nsMsgViewCommandType.junk);
++  if (!mode){
++    return mode;
++  }
++
++  // message(s)?
++  if (gFolderDisplay.selectedCount){
++    let messages=gFolderDisplay.selectedMessages;
++    if (0==messages.length)
++      return mode;
++    if (1==messages.length){
++      let junkScore=messages[0].getStringProperty("junkscore");
++      return (""==junkScore || "0"==junkScore);
++    }
++    let bJunk=messages.some(function(msg) {
++                    let junkScore=msg.getStringProperty("junkscore");
++                    if (""!=junkScore && "0"!=junkScore)
++                      return true;});
++    let bUnjunk=messages.some(function(msg) {
++                    let junkScore=msg.getStringProperty("junkscore");
++                    if (""==junkScore || "0"==junkScore)
++                      return true;});
++    if  (!bUnjunk)
++      return false;
++    return true;
++  }
++
++  return mode;
++}
++
++function cm2CanMarkAsUnjunk(){
++
++  let mode=gFolderDisplay.getCommandStatus(nsMsgViewCommandType.unjunk);
++  if (!mode){
++    return mode;
++  }
++
++  // message(s)?
++  if (gFolderDisplay.selectedCount){
++    let messages=gFolderDisplay.selectedMessages;
++    if (0==messages.length)
++      return mode;
++    if (1==messages.length){
++      let junkScore=messages[0].getStringProperty("junkscore");
++      return !(""==junkScore || "0"==junkScore);
++    }
++    let bJunk=messages.some(function(msg) {
++                    let junkScore=msg.getStringProperty("junkscore");
++                    if (""!=junkScore && "0"!=junkScore)
++                      return true;});
++    let bUnjunk=messages.some(function(msg) {
++                    let junkScore=msg.getStringProperty("junkscore");
++                    if (""==junkScore || "0"==junkScore)
++                      return true;});
++    if  (!bJunk)
++      return false;
++    return true;
++  }
++
++  return mode;
++}
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.js
+@@ -1203,6 +1203,23 @@
+           .setAttribute("checked", SelectedMessagesAreFlagged());
+ 
+   document.commandDispatcher.updateCommands('create-menu-mark');
++
++  // mantis 5108
++  let markAsJunk=document.getElementById("mailContext-markAsJunk");
++  let markAsNotJunk=document.getElementById("mailContext-markAsNotJunk");
++  if (1<gFolderDisplay.selectedCount){
++    if (!markAsJunk.label.endsWith("s")){
++      markAsJunk.label+="s";
++      markAsNotJunk.label+="s";
++    }
++  } else {
++    let lib=markAsJunk.label;
++    if (lib.endsWith("s")){
++      markAsJunk.label=lib.substr(0, lib.length-1);
++      lib=markAsNotJunk.label;
++      markAsNotJunk.label=lib.substr(0, lib.length-1);
++    }
++  }
+ }
+ 
+ function UpdateJunkToolbarButton()
+diff --git a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+--- a/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
++++ b/comm-esr60/comm/mail/base/content/mailWindowOverlay.xul
+@@ -780,18 +780,25 @@
+       </menupopup>
+     </menu>
+     <menuitem id="mailContext-multiForwardAsAttachment"
+-              label="&contextMultiForwardAsAttachment.label;"
+-              accesskey="&contextMultiForwardAsAttachment.accesskey;"
++              label="&contextForwardAsAttachmentItem.label;"
++              accesskey="&contextForwardAsAttachmentItem.accesskey;"
+               oncommand="MsgForwardAsAttachment(event);"/>
+     <!-- The following item (mailContext-editAsNew) is not hooked to its command
+          because we need to enable it even in some cases there is no real
+          selected message yet, only a rightclick on a message. -->
+-    <menuitem id="mailContext-editAsNew"
+-              label="&contextEditMsgAsNew.label;"
+-              accesskey="&contextEditMsgAsNew.accesskey;"
+-              class="menuitem-iconic"
+-              image="Nouveaumessage.png"
+-              oncommand="NouveauMsgMemeDest();"/>
++    <menu id="mailContext-nouveau" label="&contextNouveau.label;" 
++          accesskey="&contextNouveau.accesskey;"
++          class="menu-iconic"
++          image="Nouveaumessage.png">
++      <menupopup id="mailContext-nouveaupopup">    
++        <menuitem id="mailContext-NewMsgDest"
++                  label="&contextNewMsgDest.label;"
++                  oncommand="NouveauMsgMemeDest();"/>    
++        <menuitem id="mailContext-editAsNew"
++                  label="&contextEditMsgAsNew.label;"
++                  oncommand="MsgEditMessageAsNew();"/>
++      </menupopup>
++    </menu>  
+     <menuseparator id="mailContext-sep-reply"/>
+     <menu id="mailContext-tags" label="&tagMenu.label;" accesskey="&tagMenu.accesskey;">
+       <menupopup id="mailContext-tagpopup"
+@@ -841,19 +848,25 @@
+                   label="&markStarredCmd.label;"
+                   accesskey="&markStarredCmd.accesskey;"
+                   command="cmd_markAsFlagged"/>
+-        <menuseparator id="mailContext-sep-afterMarkFlagged"/>
++      </menupopup>
++    </menu>
++    <menu id="mailContext-junk"
++          label="&markJunk.label;">
++      <menupopup id="mailContext-junkPopup"
++                 onpopupshowing="InitMessageMark()">
+         <menuitem id="mailContext-markAsJunk"
+-                  label="&markAsJunkCmd.label;"
++                  label="&markAsJunkCmd2.label;"
+                   accesskey="&markAsJunkCmd.accesskey;"
+                   command="cmd_markAsJunk"/>
++        <menuseparator id="mailContext-sep-afterMarkAsJunk"/>
+         <menuitem id="mailContext-markAsNotJunk"
+-                  label="&markAsNotJunkCmd.label;"
++                  label="&markAsNotJunkCmd2.label;"
+                   accesskey="&markAsNotJunkCmd.accesskey;"
+                   command="cmd_markAsNotJunk"/>
+         <menuitem id="mailContext-recalculateJunkScore"
+                   label="&recalculateJunkScoreCmd.label;"
+                   accesskey="&recalculateJunkScoreCmd.accesskey;"
+-                  command="cmd_recalculateJunkScore"/>
++                  command="cmd_recalculateJunkScore" hidden="true"/>
+       </menupopup>
+     </menu>
+     <menuseparator id="mailContext-sep-afterMarkMenu"/>
+@@ -899,6 +912,22 @@
+               image="Supprimer.png"
+               command="cmd_delete"/>
+ -->
++    <menu id="mailContext_Discussion"
++                  label="&contextDiscussion.label;">
++      <menupopup id="mailContext_DiscussionPopup">              
++        <menuitem id="mailContext-ignoreThread"
++                  label="&contextKillThreadMenu.label;"
++                  accesskey="&contextKillThreadMenu.accesskey;"
++                  command="cmd_killThread"/>
++        <menuitem id="mailContext-ignoreSubthread"
++                  label="&contextKillSubthreadMenu.label;"
++                  command="cmd_killSubthread"/>
++        <menuitem id="mailContext-watchThread"
++                  label="&contextWatchThreadMenu.label;"
++                  command="cmd_watchThread"/>
++      </menupopup>
++    </menu>
++    
+     <menuseparator id="paneContext-afterMove"/>
+     <menuitem id="mailContext-ignoreThread"
+               label="&contextKillThreadMenu.label;"
+@@ -912,7 +941,9 @@
+               label="&contextWatchThreadMenu.label;"
+               accesskey="&contextWatchThreadMenu.accesskey;"
+               command="cmd_watchThread"/>
++    <!--
+     <menuseparator id="mailContext-afterWatchThread"/>
++    -->
+     <menuitem id="mailContext-saveAs"
+               label="&contextSaveAs.label;"
+               accesskey="&contextSaveAs.accesskey;"
+diff --git a/comm-esr60/comm/mail/base/content/nsContextMenu.js b/comm-esr60/comm/mail/base/content/nsContextMenu.js
+--- a/comm-esr60/comm/mail/base/content/nsContextMenu.js
++++ b/comm-esr60/comm/mail/base/content/nsContextMenu.js
+@@ -272,7 +272,7 @@
+         "mailContext-watchThread",
+         "mailContext-tags", "mailContext-mark", "mailContext-saveAs",
+         "mailContext-printpreview", "mailContext-print", "mailContext-delete",
+-        "downloadSelected", "mailContext-reportPhishingURL"
++        "downloadSelected", "mailContext-reportPhishingURL", "mailContext-nouveau"
+       ];
+       for (let i = 0; i < messageTabSpecificItems.length; ++i)
+         this.showItem(messageTabSpecificItems[i], false);
+@@ -301,6 +301,7 @@
+     //this.setSingleSelection("mailContext-replyList");
+     this.setSingleSelection("mailContext-forward");
+     //this.setSingleSelection("mailContext-forwardAsMenu");
++    this.setSingleSelection("mailContext-nouveau");
+     this.setSingleSelection("mailContext-editAsNew");
+     this.setSingleSelection("mailContext-editDraftMsg",
+                             document.getElementById("cmd_editDraftMsg")
+@@ -348,6 +349,20 @@
+ 
+     this.showItem("mailContext-mark", msgModifyItems);
+ 
++    // mantis 5108
++    this.showItem("mailContext-junk", msgModifyItems);
++    let markAsJunk=document.getElementById("mailContext-junk");
++    if (1<gFolderDisplay.selectedCount){
++    if (!markAsJunk.label.endsWith("s")){
++        markAsJunk.label+="s";
++      }
++    } else {
++      let lib=markAsJunk.label;
++      if (lib.endsWith("s")){
++        markAsJunk.label=lib.substr(0, lib.length-1);
++      }
++    }
++
+     this.showItem("mailContext-ignoreThread", !this.inStandaloneWindow &&
+                                               this.numSelectedMessages >= 1 &&
+                                               !this.hideMailItems &&
+@@ -363,7 +378,8 @@
+                                              !this.hideMailItems &&
+                                              !this.onPlayableMedia);
+ 
+-    this.showItem("mailContext-afterWatchThread", !this.inStandaloneWindow);
++    //this.showItem("mailContext-afterWatchThread", !this.inStandaloneWindow);
++    this.showItem("mailContext_Discussion", msgModifyItems);
+ 
+     this.showItem("mailContext-saveAs", this.numSelectedMessages > 0 &&
+                                         !this.hideMailItems &&
+@@ -401,8 +417,8 @@
+       "mailContext-sep-open", "mailContext-sep-open2",
+       "mailContext-sep-reply", "paneContext-afterMove",
+       "mailContext-sep-afterTagAddNew", "mailContext-sep-afterTagRemoveAll",
+-      "mailContext-sep-afterMarkAllRead", "mailContext-sep-afterMarkFlagged",
+-      "mailContext-sep-afterMarkMenu", "mailContext-afterWatchThread",
++      //"mailContext-sep-afterMarkAllRead", "mailContext-sep-afterMarkFlagged",
++      //"mailContext-sep-afterMarkMenu", "mailContext-afterWatchThread",
+       "mailContext-sep-edit", "mailContext-sep-editTemplate",
+       "mailContext-sep-copy", "mailContext-sep-reportPhishing",
+       "mailContext-sep-undo", "mailContext-sep-clipboard",
+diff --git a/fr-esr60/fr/mail/chrome/messenger/messenger.dtd b/fr-esr60/fr/mail/chrome/messenger/messenger.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/messenger.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/messenger.dtd
+@@ -97,7 +97,7 @@
+ <!ENTITY deleteMsgCmd.accesskey "S">
+ <!ENTITY undeleteMsgCmd.label "Restaurer le message">
+ <!ENTITY undeleteMsgCmd.accesskey "R">
+-<!ENTITY deleteMsgsCmd.label "Supprimer les messages sélectionnés">
++<!ENTITY deleteMsgsCmd.label "Supprimer">
+ <!ENTITY deleteMsgsCmd.accesskey "S">
+ <!ENTITY undeleteMsgsCmd.label "Restaurer les messages sélectionnés">
+ <!ENTITY undeleteMsgsCmd.accesskey "R">
+@@ -367,7 +367,7 @@
+ <!ENTITY forwardAsInline.accesskey "I">
+ <!ENTITY forwardAsAttachmentCmd.label "Pièce jointe">
+ <!ENTITY forwardAsAttachmentCmd.accesskey "P">
+-<!ENTITY editAsNewMsgCmd.label "Modifier comme un nouveau message">
++<!ENTITY editAsNewMsgCmd.label "Editer comme un nouveau message">
+ <!ENTITY editAsNewMsgCmd.accesskey "e">
+ <!ENTITY editAsNewMsgCmd.key "e">
+ <!ENTITY editDraftMsgCmd.label "Modifier le brouillon">
+@@ -454,6 +454,12 @@
+ <!ENTITY openFeedWebPageInMP.label "Basculer entre page web et résumé dans le panneau de message">
+ <!ENTITY openFeedWebPageInMP.accesskey "B">
+ 
++<!ENTITY markJunk.label "Indésirable">
++<!ENTITY markAsJunkCmd2.label "Marquer comme indésirable">
++<!ENTITY markAsNotJunkCmd2.label "Marquer comme acceptable">
++
++
++
+ <!-- Windows Menu -->
+ <!ENTITY windowMenu.label "Fenêtre">
+ 
+@@ -763,7 +769,7 @@
+ <!ENTITY contextOpenConversation.accesskey "v">
+ <!ENTITY contextOpenContainingFolder.label "Ouvrir le message dans le dossier qui le contient">
+ <!ENTITY contextOpenContainingFolder.accesskey "i">
+-<!ENTITY contextEditMsgAsNew.label "Nouveau message aux mêmes destinataires">
++<!ENTITY contextEditMsgAsNew.label "Editer comme un nouveau message">
+ <!ENTITY contextEditMsgAsNew.accesskey "e">
+ <!ENTITY contextEditDraftMsg.label "Modifier le brouillon">
+ <!ENTITY contextEditTemplate.label "Éditer le modèle">
+@@ -810,6 +816,10 @@
+ <!ENTITY contextPrint.accesskey "p">
+ <!ENTITY contextPrintPreview.label "Imprimer…">
+ <!ENTITY contextPrintPreview.accesskey "p">
++<!ENTITY contextDiscussion.label "Discussion">
++<!ENTITY contextNouveau.label "Nouveau message">
++<!ENTITY contextNouveau.accesskey "e">
++<!ENTITY contextNewMsgDest.label "Nouveau message aux mêmes destinataires">
+ 
+ <!-- Thread Pane Column Picker -->
+ <!-- LOCALIZATION NOTE (columnPicker.resetToInbox.label):

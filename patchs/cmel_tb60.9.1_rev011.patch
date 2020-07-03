@@ -1,0 +1,22 @@
+# HG changeset patch
+# User pm
+# Date 1526570017 -7200
+#      Thu May 17 17:13:37 2018 +0200
+# Node ID cea3344a9bdc2c083945b3fca77219107b66a85e
+# Parent  bc00493242860798ddab3fc3af0ab877eef920c1
+Modification de la preference mailnews.headers.extraExpandedHeaders
+
+diff --git a/comm-esr60/comm/mailnews/mailnews.js b/comm-esr60/comm/mailnews/mailnews.js
+--- a/comm-esr60/comm/mailnews/mailnews.js
++++ b/comm-esr60/comm/mailnews/mailnews.js
+@@ -45,7 +45,9 @@
+ pref("mailnews.filters.confirm_delete", true);
+ 
+ // space-delimited list of extra headers to show in msg header display area.
+-pref("mailnews.headers.extraExpandedHeaders", "");
++//cm2 - extraExpandedHeaders
++pref("mailnews.headers.extraExpandedHeaders", "X-mineqActionInvRDV X-Suivimel");
++//fin cm2
+ 
+ // Space-delimited list of extra headers that will be pushed to
+ // currentHeaderData for processing in add-ons (without being displayed).

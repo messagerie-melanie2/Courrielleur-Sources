@@ -1,0 +1,42 @@
+# HG changeset patch
+# User pm
+# Date 1453972376 -3600
+#      Thu Jan 28 10:12:56 2016 +0100
+# Node ID 7985271ad2bdd24ca5092bcc0c2749fa950ad198
+# Parent  648c42242c0375d07ec8affb32cae7b1b595d57c
+Ticket mantis 0004068: choix d'imprimer ou non les destinataires des messages (implementation module courrielleur)
+
+diff --git a/comm-esr60/toolkit/components/printing/content/printPageSetup.xul b/comm-esr60/toolkit/components/printing/content/printPageSetup.xul
+--- a/comm-esr60/toolkit/components/printing/content/printPageSetup.xul
++++ b/comm-esr60/toolkit/components/printing/content/printPageSetup.xul
+@@ -25,13 +25,13 @@
+   <data id="customPrompt.title">&customPrompt.title;</data>
+   <data id="customPrompt.prompt">&customPrompt.prompt;</data>
+ 
+-  <tabbox flex="1">
++  <tabbox id="tabbox1" flex="1">
+     <tabs>
+       <tab label="&basic.tab;"/>
+       <tab label="&advanced.tab;"/>
+     </tabs>
+-    <tabpanels flex="1">
+-      <vbox>
++    <tabpanels id="panneaux" flex="1">
++      <vbox id="onglet1">
+         <groupbox>
+           <caption label="&formatGroup.label;"/>
+           <vbox>
+diff --git a/comm-esr60/toolkit/components/printing/content/printPreviewBindings.xml b/comm-esr60/toolkit/components/printing/content/printPreviewBindings.xml
+--- a/comm-esr60/toolkit/components/printing/content/printPreviewBindings.xml
++++ b/comm-esr60/toolkit/components/printing/content/printPreviewBindings.xml
+@@ -231,7 +231,9 @@
+             this.updateToolbar();
+ 
+             // Now do PrintPreview
+-            PrintUtils.printPreview();
++            //PrintUtils.printPreview();
++            //mantis 4068
++            cm2InitPrintEngineWindow();
+           }
+         ]]>
+         </body>

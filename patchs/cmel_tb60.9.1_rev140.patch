@@ -1,0 +1,20 @@
+# HG changeset patch
+# User Ludovic <>
+# Date 1582194138 -3600
+#      Thu Feb 20 11:22:18 2020 +0100
+# Node ID 32c42c006080b82002c6377499cad3f9e6c73541
+# Parent  c1921cdaac724809d2f764dc5765935172e6b68f
+Numéro de version du courrielleur 8.5
+
+diff --git a/comm-esr60/toolkit/mozapps/installer/package-name.mk b/comm-esr60/toolkit/mozapps/installer/package-name.mk
+--- a/comm-esr60/toolkit/mozapps/installer/package-name.mk
++++ b/comm-esr60/toolkit/mozapps/installer/package-name.mk
+@@ -11,7 +11,7 @@
+ PACKAGE_NAME_MK_INCLUDED := 1
+ 
+ ifndef MOZ_PKG_VERSION
+-MOZ_PKG_VERSION = 8.5T4
++MOZ_PKG_VERSION = 8.5
+ endif
+ 
+ ifndef MOZ_PKG_PLATFORM

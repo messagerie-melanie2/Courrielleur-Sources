@@ -1,0 +1,29 @@
+# HG changeset patch
+# User pm
+# Date 1539250845 -7200
+#      Thu Oct 11 11:40:45 2018 +0200
+# Node ID c0e897a0cd3b36385b9795d766cffe9da248d17b
+# Parent  b435bd5663f15df51e92a9be3c7a87586832c84e
+Affichage de la barre d'outils des dossiers
+
+diff --git a/comm-esr60/comm/mail/base/content/messenger.xul b/comm-esr60/comm/mail/base/content/messenger.xul
+--- a/comm-esr60/comm/mail/base/content/messenger.xul
++++ b/comm-esr60/comm/mail/base/content/messenger.xul
+@@ -333,7 +333,7 @@
+ 
+           <box id="messengerBox" orient="horizontal" flex="1" minheight="100" height="100" persist="height">
+             <vbox id="folderPaneBox" minwidth="125" width="200" persist="width">
+-              <sidebarheader id="folderPaneHeader" align="center"/>
++              <sidebarheader id="folderPaneHeader" align="center" hidden="true"/>
+               <toolbar id="folderPane-toolbar"
+                        class="inline-toolbar"
+                        toolboxid="mail-toolbox"
+@@ -345,7 +345,7 @@
+                        iconsize="small" defaulticonsize="small" lockiconsize="true"
+                        context="toolbar-context-menu"
+                        defaultset="folderpane-mode-selector"
+-                       collapsed="true"/>
++                       collapsed="false"/>
+               <tree id="folderTree" class="plain" flex="1"
+                     hidecolumnpicker="true" persist="mode" mode="all"
+                     keepcurrentinview="true"

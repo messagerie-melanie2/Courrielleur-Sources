@@ -1,0 +1,67 @@
+# HG changeset patch
+# User pm
+# Date 1526573041 -7200
+#      Thu May 17 18:04:01 2018 +0200
+# Node ID 9fc1b623a2df8c04f6e075f61fd0a877b8f0792b
+# Parent  53ec7de55b29ec49cecfc814a641e553a2b9afef
+Ticket mantis 0002846 - Ajouter une option de menu 'Rechercher des mises  jour...'
+
+diff --git a/comm-esr60/comm/mail/base/content/helpMenu.inc b/comm-esr60/comm/mail/base/content/helpMenu.inc
+--- a/comm-esr60/comm/mail/base/content/helpMenu.inc
++++ b/comm-esr60/comm/mail/base/content/helpMenu.inc
+@@ -28,6 +28,13 @@
+ #ifndef XP_MACOSX
+           <menuseparator id="aboutSeparator"/>
+ #endif
++      <menuitem id="checkForUpdates"
++#ifdef MOZ_UPDATER
++                label="&updateCmd.label;"
++                oncommand="checkForUpdates();"/>
++#else
++                hidden="true"/>
++#endif
+           <menuitem id="aboutName" hidden="true"
+                     label="&aboutMenuCmd2.label;"
+                     accesskey="&aboutMenuCmd2.accesskey;"
+diff --git a/comm-esr60/comm/mail/base/content/utilityOverlay.js b/comm-esr60/comm/mail/base/content/utilityOverlay.js
+--- a/comm-esr60/comm/mail/base/content/utilityOverlay.js
++++ b/comm-esr60/comm/mail/base/content/utilityOverlay.js
+@@ -326,6 +326,27 @@
+   openContentTab(url, where, "^http://www.mozilla.org/");
+ }
+ 
++/**
++ * Opens the update manager and checks for updates to the application.
++ */
++function checkForUpdates()
++{
++  var um =
++      Components.classes["@mozilla.org/updates/update-manager;1"].
++      getService(Components.interfaces.nsIUpdateManager);
++  var prompter =
++      Components.classes["@mozilla.org/updates/update-prompt;1"].
++      createInstance(Components.interfaces.nsIUpdatePrompt);
++
++  // If there's an update ready to be applied, show the "Update Downloaded"
++  // UI instead and let the user know they have to restart the application for
++  // the changes to be applied.
++  if (um.activeUpdate && um.activeUpdate.state == "pending")
++    prompter.showUpdateDownloaded(um.activeUpdate);
++  else
++    prompter.checkForUpdates();
++}
++
+ /* Used by the Add-on manager's search box */
+ function openLinkIn(aURL, aWhere, aOpenParams) {
+   if (!aURL)
+diff --git a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+--- a/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
++++ b/fr-esr60/fr/mail/chrome/messenger/baseMenuOverlay.dtd
+@@ -25,6 +25,7 @@
+ <!ENTITY openHelpMac2.commandkey   "?">
+ <!ENTITY openHelpMac2.modifiers    "accel">
+ 
++<!ENTITY updateCmd.label "Rechercher des mises à jour...">
+ <!ENTITY aboutMenuCmd.label "À propos de &brandShortName;">
+ <!ENTITY aboutMenuCmd.accesskey "p">
+ 
