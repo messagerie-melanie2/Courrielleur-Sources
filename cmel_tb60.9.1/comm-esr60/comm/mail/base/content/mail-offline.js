@@ -12,7 +12,8 @@ var MailOfflineMgr = {
   init: function()
   {
     Services.obs.addObserver(this, "network:offline-status-changed");
-
+    Services.obs.addObserver(this, "network:link-status-changed");
+    
     this.offlineManager = Cc["@mozilla.org/messenger/offline-manager;1"]
                         .getService(Ci.nsIMsgOfflineManager);
     this.offlineBundle = document.getElementById("bundle_offlinePrompts");
@@ -24,6 +25,7 @@ var MailOfflineMgr = {
   uninit: function()
   {
     Services.obs.removeObserver(this, "network:offline-status-changed");
+    Services.obs.removeObserver(this, "network:link-status-changed");
   },
 
   /**
@@ -47,11 +49,14 @@ var MailOfflineMgr = {
     {
       // We do the go online stuff in our listener for the online state change.
       Services.io.offline = false;
+      this.mailOfflineStateChanged(false);
       // resume managing offline status now that we are going back online.
       Services.io.manageOfflineStatus = Services.prefs.getBoolPref("offline.autoDetect");
     }
     else // going offline
     {
+      Services.io.offline = true;
+      this.mailOfflineStateChanged(true);
       // Stop automatic management of the offline status since the user has
       // decided to go offline.
       Services.io.manageOfflineStatus = false;
@@ -65,8 +70,14 @@ var MailOfflineMgr = {
 
   observe: function (aSubject, aTopic, aState)
   {
-    if (aTopic == "network:offline-status-changed")
+    /*if (aTopic == "network:offline-status-changed")
+    {
       this.mailOfflineStateChanged(aState == "offline");
+    }*/
+    if (aTopic == "network:link-status-changed" && (aState == "up" || aState == "down"))
+    {
+      this.mailOfflineStateChanged(aState == "down");
+    }
   },
 
   /**
@@ -203,6 +214,9 @@ var MailOfflineMgr = {
    */
   updateOfflineUI: function(aIsOffline)
   {
+    // 5781: Si coupure du réseau pendant l'émission d'un message, à l'envoi celui-ci, messages d'erreur et copie impossible dans brouillon
+    Services.io.offline = aIsOffline;
+    
     document.getElementById("goOfflineMenuItem").setAttribute("checked", aIsOffline);
     if (document.getElementById("appmenu_goOffline"))
       document.getElementById("appmenu_goOffline").setAttribute("checked", aIsOffline);
