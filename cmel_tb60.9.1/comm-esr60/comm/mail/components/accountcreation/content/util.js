@@ -113,12 +113,18 @@ function splitLines(content)
  * @returns new array {Array}
  */
 Array.prototype.unique = function(testFunc) {
-  return this.reduce((found, nextEl) => {
+  // 5657 Conversion message en évènement
+  if(Array.isArray(this))
+  {
+    return this.reduce((found, nextEl) => {
     if (!found.some(prevEl => testFunc(prevEl) == testFunc(nextEl))) {
       found.push(nextEl);
     }
     return found;
-  }, []);
+    }, []);
+  }
+  else
+    return [];
 };
 
 /**
