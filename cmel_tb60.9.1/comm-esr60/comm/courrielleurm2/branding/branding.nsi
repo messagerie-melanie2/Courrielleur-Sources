@@ -41,7 +41,7 @@
 # instead of BrandFullName and typically should not be modified.
 !define BrandFullNameInternal "Courrielleur Mel"
 !define BrandFullName         "Courrielleur Mél"
-!define CompanyName           "PNE Annuaire et Messagerie"
+!define CompanyName           "SG/SNUM/UNI/DETN"
 !define URLInfoAbout          "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
 !define URLUpdateInfo         "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
 !define SurveyURL             "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
