@@ -598,6 +598,17 @@ var gFolderTreeView = {
       return null;
     return this._rowMap[aIndex]._folder;
   },
+  
+  // #5980
+  getAllFolders2: function ftv_getAllFolders2() 
+  {
+    let folderArray = [];
+    for (let i = 0; i < this._rowMap.length; i++) {
+        folderArray.push(this._rowMap[i]._folder);
+    }
+    return folderArray;
+  },
+  
 
   /**
    * Returns the parent of a folder in the current view. This may be, but is not
@@ -2736,26 +2747,61 @@ var gFolderTreeController = {
    * @param aFolder (optional)  the folder to rename, if different than the
    *                            currently selected one
    */
-  renameFolder: function ftc_rename(aFolder) {
+  renameFolder: function ftc_rename(aFolder) 
+  {
+
+      // #5980
+     function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+      }
+      // #5980
+      function recolor(aName, foldercolor)
+      {
+        var folders = gFolderTreeView.getAllFolders2();
+        for (var folder of folders) 
+        {
+          if(folder.name == aName)
+          {
+            //Services.console.logStringMessage(tfolders);
+            folder.setStringProperty("folderColor", folderColor);
+            break;
+          }
+        }        
+        // force redraw
+        var box = document.getElementById("folderTree").boxObject;
+        box.QueryInterface(Components.interfaces.nsITreeBoxObject);
+        box.invalidate();
+      }
+    
     let folder = aFolder || gFolderTreeView.getSelectedFolders()[0];
 
+    // #5980 On récupère la couleur du dossier avant renomage
+    var folderColor = folder.getStringProperty("folderColor");
+    
     //xxx no need for uri now
     let controller = this;
-    function renameCallback(aName, aUri) {
+    function renameCallback(aName, aUri) 
+    {
       if (aUri != folder.URI)
         Cu.reportError("got back a different folder to rename!");
 
       controller._tree.view.selection.clearSelection();
-
+      
+      var folderColor = folder.getStringProperty("folderColor");
+      
       // Actually do the rename
       folder.rename(aName, msgWindow);
+      
+      // #5980 Sleep and recolor
+      sleep(5000).then(() => { recolor(aName, folderColor); });
     }
+    
     window.openDialog("chrome://messenger/content/renameFolderDialog.xul",
                       "",
                       "chrome,modal,centerscreen",
-                      {preselectedURI: folder.URI,
-                       okCallback: renameCallback, name: folder.prettyName});
+                      {preselectedURI: folder.URI, okCallback: renameCallback, name: folder.prettyName});
   },
+
 
   /**
    * Deletes a folder from its parent. Also handles unsubscribe from newsgroups
