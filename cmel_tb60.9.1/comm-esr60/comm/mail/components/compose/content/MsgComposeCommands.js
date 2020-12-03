@@ -2862,14 +2862,15 @@ function ComposeStartup(aParams)
   // that created the draft or the identity owning the draft folder for a "foreign",
   // draft, see ComposeMessage() in mailCommands.js. We don't want the latter,
   // so use the creator identity which could be null.
-  if (gComposeType == nsIMsgCompType.Draft) {
+  
+  // //5963 
+  /*if (gComposeType == nsIMsgCompType.Draft) {
     let creatorKey = params.composeFields.creatorIdentityKey;
     params.identity = creatorKey ? getIdentityForKey(creatorKey) : null;
-  }
+  }*/
   let from = [];
   if (params.composeFields.from)
-    from = MailServices.headerParser
-                       .parseEncodedHeader(params.composeFields.from, null);
+    from = MailServices.headerParser.parseEncodedHeader(params.composeFields.from, null);
   from = (from.length && from[0] && from[0].email) ?
     from[0].email.toLowerCase().trim() : null;
   if (!params.identity || !params.identity.email ||
@@ -2877,18 +2878,21 @@ function ComposeStartup(aParams)
     let identities = MailServices.accounts.allIdentities;
     let suitableCount = 0;
 
-    // Search for a matching identity.
-    if (from) {
+    // Search for a matching identity. //5963 
+    /*if (from) {
       for (let ident of fixIterator(identities, Ci.nsIMsgIdentity)) {
         if (ident.email && from == ident.email.toLowerCase()) {
           if (suitableCount == 0)
+          {
             params.identity = ident;
+            console.log(params.identity.email);
+          }
           suitableCount++;
           if (suitableCount > 1)
             break; // No need to find more, it's already not unique.
         }
       }
-    }
+    }*/
 
     if (!params.identity || !params.identity.email) {
       // No preset identity and no match, so use the default account.
@@ -2902,10 +2906,9 @@ function ComposeStartup(aParams)
     }
 
     // Warn if no or more than one match was found.
-    // But don't warn for +suffix additions (a+b@c.com).
-    if (from && (suitableCount > 1 ||
-        (suitableCount == 0 && !emailSimilar(from, params.identity.email))))
-      gComposeNotificationBar.setIdentityWarning(params.identity.identityName);
+    // But don't warn for +suffix additions (a+b@c.com). //5963 
+    /*if (from && (suitableCount > 1 || (suitableCount == 0 && !emailSimilar(from, params.identity.email))))
+      gComposeNotificationBar.setIdentityWarning(params.identity.identityName);*/
   }
   
   // #5306 on ajoute le if pour éviter de vérifier l'identity si elle est null
