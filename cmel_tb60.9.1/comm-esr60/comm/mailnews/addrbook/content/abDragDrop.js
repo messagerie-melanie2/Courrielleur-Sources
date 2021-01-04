@@ -102,6 +102,8 @@ var abResultsPaneObserver = {
 var dragService = Cc["@mozilla.org/widget/dragservice;1"]
                     .getService(Ci.nsIDragService);
 
+var tempData;
+
 var abDirTreeObserver = {
   /**
    * canDrop - determine if the tree will accept the dropping of a item
@@ -130,6 +132,7 @@ var abDirTreeObserver = {
    */
   canDrop: function(index, orientation, dataTransfer)
   {
+    tempData = dataTransfer;
     if (orientation != Ci.nsITreeView.DROP_ON)
       return false;
     if (!dataTransfer.types.includes("moz/abcard")) {
@@ -220,115 +223,125 @@ var abDirTreeObserver = {
    */
   onDrop: function(index, orientation, dataTransfer)
   {
-    var dragSession = dragService.getCurrentSession();
-    if (!dragSession)
-      return;
-    if (!dataTransfer.types.includes("moz/abcard")) {
-      return;
-    }
-
-    let targetURI = gDirectoryTreeView.getDirectoryAtIndex(index).URI;
-    let srcURI = getSelectedDirectoryURI();
-
-    // The data contains the a string of "selected rows", eg.: "1,2".
-    var rows = dataTransfer.getData("moz/abcard").split(",").map(j => parseInt(j, 10));
-    var numrows = rows.length;
-
-    var result;
-    // needToCopyCard is used for whether or not we should be creating
-    // copies of the cards in a mailing list in a different address book
-    // - it's not for if we are moving or not.
-    var needToCopyCard = true;
-    if (srcURI.length > targetURI.length) {
-      result = srcURI.split(targetURI);
-      if (result[0] != srcURI) {
-        // src directory is a mailing list on target directory, no need to copy card
-        needToCopyCard = false;
+    dataTransfer = tempData;
+    try
+    {
+      var dragSession = dragService.getCurrentSession();
+      
+      if (!dragSession){
+        return;
       }
-    }
-    else {
-      result = targetURI.split(srcURI);
-      if (result[0] != targetURI) {
-        // target directory is a mailing list on src directory, no need to copy card
-        needToCopyCard = false;
+      if (!dataTransfer.types.includes("moz/abcard")) {
+        return;
       }
-    }
+      
+      let targetURI = gDirectoryTreeView.getDirectoryAtIndex(index).URI;
+      let srcURI = getSelectedDirectoryURI();
 
-    // if we still think we have to copy the card,
-    // check if srcURI and targetURI are mailing lists on same directory
-    // if so, we don't have to copy the card
-    if (needToCopyCard) {
-      var targetParentURI = GetParentDirectoryFromMailingListURI(targetURI);
-      if (targetParentURI && (targetParentURI == GetParentDirectoryFromMailingListURI(srcURI)))
-        needToCopyCard = false;
-    }
+      // The data contains the a string of "selected rows", eg.: "1,2".
+      var rows = dataTransfer.getData("moz/abcard").split(",").map(j => parseInt(j, 10));
+      
+      var numrows = rows.length;
 
-    var directory = GetDirectoryFromURI(targetURI);
-
-    // Only move if we are not transferring to a mail list
-    var actionIsMoving = (dragSession.dragAction & dragSession.DRAGDROP_ACTION_MOVE) && !directory.isMailList;
-
-    let cardsToCopy = [];
-    for (let j = 0; j < numrows; j++) {
-      cardsToCopy.push(gAbView.getCardFromRow(rows[j]));
-    }
-    for (let card of cardsToCopy) {
-      if (card.isMailList) {
-        // This check ensures we haven't slipped through by mistake
-        if (needToCopyCard && actionIsMoving) {
-          directory.addMailList(GetDirectoryFromURI(card.mailListURI));
+      var result;
+      // needToCopyCard is used for whether or not we should be creating
+      // copies of the cards in a mailing list in a different address book
+      // - it's not for if we are moving or not.
+      var needToCopyCard = true;
+      if (srcURI.length > targetURI.length) {
+        result = srcURI.split(targetURI);
+        if (result[0] != srcURI) {
+          // src directory is a mailing list on target directory, no need to copy card
+          needToCopyCard = false;
         }
-      } else {
-        let srcDirectory = null;
-        if (srcURI == (kAllDirectoryRoot + "?") && actionIsMoving) {
-          let dirId = card.directoryId.substring(0, card.directoryId.indexOf("&"));
-          srcDirectory = MailServices.ab.getDirectoryFromId(dirId);
+      }
+      else {
+        result = targetURI.split(srcURI);
+        if (result[0] != targetURI) {
+          // target directory is a mailing list on src directory, no need to copy card
+          needToCopyCard = false;
         }
+      }
+      // if we still think we have to copy the card,
+      // check if srcURI and targetURI are mailing lists on same directory
+      // if so, we don't have to copy the card
+      if (needToCopyCard) {
+        var targetParentURI = GetParentDirectoryFromMailingListURI(targetURI);
+        if (targetParentURI && (targetParentURI == GetParentDirectoryFromMailingListURI(srcURI)))
+          needToCopyCard = false;
+      }
 
-        directory.dropCard(card, needToCopyCard);
-
-        // This is true only if srcURI is "All ABs" and action is moving.
-        if (srcDirectory) {
-          let cardArray =
-            Cc["@mozilla.org/array;1"]
-              .createInstance(Ci.nsIMutableArray);
-          cardArray.appendElement(card);
-          srcDirectory.deleteCards(cardArray);
-        }
-        //Bug mantis 0002500: Interdire l'ajout de contact sans courriel dans les listes
-        else {
-          let c=gAbView.getCardFromRow(rows[j]);
-          if (""==c.primaryEmail) {
-            dragSession.canDrop = false;
-            return false;
+      var directory = GetDirectoryFromURI(targetURI);
+      // Only move if we are not transferring to a mail list
+      var actionIsMoving = (dragSession.dragAction & dragSession.DRAGDROP_ACTION_MOVE) && !directory.isMailList;
+      
+      let cardsToCopy = [];
+      for (let j = 0; j < numrows; j++) {
+        cardsToCopy.push(gAbView.getCardFromRow(rows[j]));
+      }
+      for (let card of cardsToCopy) {
+        if (card.isMailList) {
+          // This check ensures we haven't slipped through by mistake
+          if (needToCopyCard && actionIsMoving) {
+            directory.addMailList(GetDirectoryFromURI(card.mailListURI));
           }
+        } else {
+          let srcDirectory = null;
+          if (srcURI == (kAllDirectoryRoot + "?") && actionIsMoving) {
+            let dirId = card.directoryId.substring(0, card.directoryId.indexOf("&"));
+            srcDirectory = MailServices.ab.getDirectoryFromId(dirId);
+          }
+
+          directory.dropCard(card, needToCopyCard);
+
+          // This is true only if srcURI is "All ABs" and action is moving.
+          if (srcDirectory) {
+            let cardArray =
+              Cc["@mozilla.org/array;1"]
+                .createInstance(Ci.nsIMutableArray);
+            cardArray.appendElement(card);
+            srcDirectory.deleteCards(cardArray);
+          }
+          //Bug mantis 0002500: Interdire l'ajout de contact sans courriel dans les listes
+          else {
+            //let c=gAbView.getCardFromRow(rows[j]);
+            if (""==card.primaryEmail) {
+              dragSession.canDrop = false;
+              return false;
+            }
+          }
+          //fin Bug mantis 0002500
         }
-        //fin Bug mantis 0002500
       }
+
+      var cardsTransferredText;
+
+      // If we are moving, but not moving to a directory, then delete the
+      // selected cards and display the appropriate text
+      if (actionIsMoving && srcURI != (kAllDirectoryRoot + "?")) {
+        // If we have moved the cards, then delete them as well.
+        gAbView.deleteSelectedCards();
+      }
+
+      if (actionIsMoving) {
+        cardsTransferredText = PluralForm.get(numrows,
+          gAddressBookBundle.getFormattedString("contactsMoved", [numrows]));
+      } else {
+        cardsTransferredText = PluralForm.get(numrows,
+          gAddressBookBundle.getFormattedString("contactsCopied", [numrows]));
+      }
+
+      if (srcURI == kAllDirectoryRoot + "?") {
+        SetAbView(srcURI);
+      }
+
+      document.getElementById("statusText").label = cardsTransferredText;
     }
-
-    var cardsTransferredText;
-
-    // If we are moving, but not moving to a directory, then delete the
-    // selected cards and display the appropriate text
-    if (actionIsMoving && srcURI != (kAllDirectoryRoot + "?")) {
-      // If we have moved the cards, then delete them as well.
-      gAbView.deleteSelectedCards();
+    catch(ex)
+    {
+      Services.console.logStringMessage("ERROR onDrop (abDragDrop.js): " + ex);
+      return false;
     }
-
-    if (actionIsMoving) {
-      cardsTransferredText = PluralForm.get(numrows,
-        gAddressBookBundle.getFormattedString("contactsMoved", [numrows]));
-    } else {
-      cardsTransferredText = PluralForm.get(numrows,
-        gAddressBookBundle.getFormattedString("contactsCopied", [numrows]));
-    }
-
-    if (srcURI == kAllDirectoryRoot + "?") {
-      SetAbView(srcURI);
-    }
-
-    document.getElementById("statusText").label = cardsTransferredText;
   },
 
   onToggleOpenState: function()
