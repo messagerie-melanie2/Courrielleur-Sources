@@ -2751,12 +2751,13 @@ var gFolderTreeController = {
   {
 
       // #5980
-     function sleep(ms) {
+      function sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
       }
       // #5980
-      function recolor(aName, foldercolor)
+      function waitAndRecolor(aName, foldercolor)
       {
+        var folderFound = false;
         var folders = gFolderTreeView.getAllFolders2();
         for (var folder of folders) 
         {
@@ -2764,13 +2765,23 @@ var gFolderTreeController = {
           {
             //Services.console.logStringMessage(tfolders);
             folder.setStringProperty("folderColor", folderColor);
+            folderFound = true;
             break;
           }
-        }        
-        // force redraw
-        var box = document.getElementById("folderTree").boxObject;
-        box.QueryInterface(Components.interfaces.nsITreeBoxObject);
-        box.invalidate();
+        }
+        
+        if(folderFound)
+        {
+          // force redraw
+          var box = document.getElementById("folderTree").boxObject;
+          box.QueryInterface(Components.interfaces.nsITreeBoxObject);
+          box.invalidate();
+        }
+        else
+        {
+          // recursive loop
+          sleep(200).then(() => { waitAndRecolor(aName, folderColor); });
+        }
       }
     
     let folder = aFolder || gFolderTreeView.getSelectedFolders()[0];
@@ -2792,8 +2803,8 @@ var gFolderTreeController = {
       // Actually do the rename
       folder.rename(aName, msgWindow);
       
-      // #5980 Sleep and recolor
-      sleep(5000).then(() => { recolor(aName, folderColor); });
+      // #5980 wait renaming, then recolor
+      waitAndRecolor(aName, folderColor);
     }
     
     window.openDialog("chrome://messenger/content/renameFolderDialog.xul",
