@@ -2598,7 +2598,8 @@ ftvItem.prototype = {
     if (null!=corbeille){
       this._children.push(new ftvItem(corbeille));
     } else {
-      Services.console.logStringMessage("folderPane.js construitFilsRacine null==corbeille");
+      //#6039 réduction des messages au démarrage
+      //Services.console.logStringMessage("folderPane.js construitFilsRacine null==corbeille");
     }
 
     sortFolderItems(this._children);
