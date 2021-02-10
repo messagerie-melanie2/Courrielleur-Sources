@@ -33,8 +33,10 @@ var MailUtils =
         server.rootFolder.subFolders;
       }
       catch (ex) {
-        Services.console.logStringMessage("Discovering folders for account failed with " +
-                                          "exception: " + ex);
+        // 6039 - Adoucicement du message d'erreur
+        Services.console.logStringMessage("Aucun dossier n'a été trouvé pour une des boîtes du profil.");
+        //Services.console.logStringMessage("Discovering folders for account failed with " +
+        //                                  "exception: " + ex);
       }
     }
   },
