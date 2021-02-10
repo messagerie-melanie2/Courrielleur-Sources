@@ -120,7 +120,8 @@ var calendarController = {
             case "calendar_new_event_context_command":
                 return CalendarNewEventsCommandEnabled;
             case "calendar_modify_focused_item_command":
-                return this.item_selected;
+                //#6037
+                return true;//this.item_selected;
             case "calendar_modify_event_command":
                 return this.item_selected;
             case "calendar_delete_focused_item_command":
@@ -297,10 +298,11 @@ var calendarController = {
                     let focusedRichListbox = cal.view.getParentNodeOrThis(focusedElement, "richlistbox");
                     if (focusedRichListbox && focusedRichListbox.id == "agenda-listbox") {
                         agendaListbox.editSelectedItem();
-                    } else if (focusedElement && focusedElement.className == "calendar-task-tree") {
-                        modifyTaskFromContext();
                     } else if (this.isInMode("calendar")) {
                         editSelectedEvents();
+                        //#6037 bouton modifier ne fonctionne pas sur les tache
+                    } else if (focusedElement){// && focusedElement.className == "calendar-task-tree") {
+                        modifyTaskFromContext();
                     }
                 }
                 break;
