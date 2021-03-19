@@ -144,8 +144,7 @@ Extractor.prototype = {
         } else {
             let spellclass = "@mozilla.org/spellchecker/engine;1";
             let mozISpellCheckingEngine = Components.interfaces.mozISpellCheckingEngine;
-            let spellchecker = Components.classes[spellclass]
-                                         .getService(mozISpellCheckingEngine);
+            let spellchecker = Components.classes[spellclass].getService(mozISpellCheckingEngine);
 
             let arr = {};
             let cnt = {};
@@ -162,28 +161,39 @@ Extractor.prototype = {
             let words = this.email.split(/\s+/);
             let most = 0;
             let mostLocale;
-            for (let dict in dicts) {
+            
+            for (let dict in dicts) 
+            {
+              try
+              {
+                
+                dict = "null";
                 // dictionary locale and patterns locale match
                 if (this.checkBundle(dicts[dict])) {
                     let time1 = (new Date()).getTime();
                     spellchecker.dictionary = dicts[dict];
                     let dur = (new Date()).getTime() - time1;
-                    cal.LOG("[calExtract] Loading " + dicts[dict] +
-                            " dictionary took " + dur + "ms");
+                    cal.LOG("[calExtract] Loading " + dicts[dict] + " dictionary took " + dur + "ms");
                     patterns = dicts[dict];
                 // beginning of dictionary locale matches patterns locale
                 } else if (this.checkBundle(dicts[dict].substring(0, 2))) {
                     let time1 = (new Date()).getTime();
                     spellchecker.dictionary = dicts[dict];
                     let dur = (new Date()).getTime() - time1;
-                    cal.LOG("[calExtract] Loading " + dicts[dict] +
-                            " dictionary took " + dur + "ms");
+                    cal.LOG("[calExtract] Loading " + dicts[dict] + " dictionary took " + dur + "ms");
                     patterns = dicts[dict].substring(0, 2);
                 // dictionary for which patterns aren't present
                 } else {
                     cal.LOG("[calExtract] Dictionary present, rules missing: " + dicts[dict]);
                     continue;
                 }
+              }
+              catch(ex)
+              {
+                cal.LOG("[calExtract] Dictionary present, error found: " + dicts[dict]);
+                continue;
+              }
+              
 
                 let correct = 0;
                 let total = 0;
@@ -574,9 +584,9 @@ Extractor.prototype = {
         }
     },
 
-    extractHour: function(pattern, relation, meridiem) {
-        let alts = this.getRepPatterns(pattern,
-                                       ["(\\d{1,2}" + this.marker + this.hourlyNumbers + ")"]);
+    extractHour: function(pattern, relation, meridiem) 
+    {
+        let alts = this.getRepPatterns(pattern, ["(\\d{1,2}" + this.marker + this.hourlyNumbers + ")"]);
         let res;
         for (let alt in alts) {
             let exp = alts[alt].pattern.split(this.marker).join("|");
@@ -678,8 +688,7 @@ Extractor.prototype = {
     },
 
     extractDuration: function(pattern, unit) {
-        let alts = this.getRepPatterns(pattern,
-                                       ["(\\d{1,2}" + this.marker + this.dailyNumbers + ")"]);
+        let alts = this.getRepPatterns(pattern, ["(\\d{1,2}" + this.marker + this.dailyNumbers + ")"]);
         let res;
         for (let alt in alts) {
             let exp = alts[alt].pattern.split(this.marker).join("|");
@@ -1090,6 +1099,8 @@ Extractor.prototype = {
             }
         } catch (ex) {
             cal.LOG("[calExtract] Pattern not found: " + name);
+            //5657 Conversion événement
+            return [];
         }
         return alts;
     },
