@@ -375,6 +375,9 @@ Extractor.prototype = {
 
         let res;
         for (let alt in alts) {
+            // #5657 conversion événement
+            if(alts[alt].pattern == undefined)
+              continue;
             let positions = alts[alt].positions;
             let re = new RegExp(alts[alt].pattern, "ig");
 
@@ -402,6 +405,9 @@ Extractor.prototype = {
 
         let res;
         for (let alt in alts) {
+            // #5657 conversion événement
+            if(alts[alt].pattern == undefined)
+              continue;
             let exp = alts[alt].pattern.split(this.marker).join("|");
             let positions = alts[alt].positions;
             let re = new RegExp(exp, "ig");
@@ -448,6 +454,9 @@ Extractor.prototype = {
         ]);
         let res;
         for (let alt in alts) {
+            // #5657 conversion événement
+            if(alts[alt].pattern == undefined)
+              continue;
             let exp = alts[alt].pattern.split(this.marker).join("|");
             let positions = alts[alt].positions;
             let re = new RegExp(exp, "ig");
@@ -491,6 +500,10 @@ Extractor.prototype = {
         let alts = this.getRepPatterns(pattern, ["(\\d{1,2})", "(\\d{1,2})"]);
         let res;
         for (let alt in alts) {
+            // #5657 conversion événement
+            if(alts[alt].pattern == undefined)
+              continue;
+            
             let re = new RegExp(alts[alt].pattern, "ig");
             let positions = alts[alt].positions;
 
@@ -529,6 +542,9 @@ Extractor.prototype = {
                                        ["(\\d{1,2}" + this.marker + this.dailyNumbers + ")"]);
         let res;
         for (let alt in alts) {
+            // #5657 conversion événement
+            if(alts[alt].pattern == undefined)
+              continue;
             let exp = alts[alt].pattern.split(this.marker).join("|");
             let re = new RegExp(exp, "ig");
 
@@ -589,6 +605,9 @@ Extractor.prototype = {
         let alts = this.getRepPatterns(pattern, ["(\\d{1,2}" + this.marker + this.hourlyNumbers + ")"]);
         let res;
         for (let alt in alts) {
+            // #5657 conversion événement
+            if(alts[alt].pattern == undefined)
+              continue;
             let exp = alts[alt].pattern.split(this.marker).join("|");
             let re = new RegExp(exp, "ig");
 
@@ -619,6 +638,9 @@ Extractor.prototype = {
                                        ["(\\d{1,2}" + this.marker + this.hourlyNumbers + ")"]);
         let res;
         for (let alt in alts) {
+            // #5657 conversion événement
+            if(alts[alt].pattern == undefined)
+              continue;
             let exp = alts[alt].pattern.split(this.marker).join("|");
             let re = new RegExp(exp, "ig");
 
@@ -649,6 +671,9 @@ Extractor.prototype = {
         let alts = this.getRepPatterns(pattern, ["(\\d{1,2})", "(\\d{2})"]);
         let res;
         for (let alt in alts) {
+            // #5657 conversion événement
+            if(alts[alt].pattern == undefined)
+              continue;
             let positions = alts[alt].positions;
             let re = new RegExp(alts[alt].pattern, "ig");
 
@@ -691,6 +716,9 @@ Extractor.prototype = {
         let alts = this.getRepPatterns(pattern, ["(\\d{1,2}" + this.marker + this.dailyNumbers + ")"]);
         let res;
         for (let alt in alts) {
+            // #5657 conversion événement
+            if(alts[alt].pattern == undefined)
+              continue;
             let exp = alts[alt].pattern.split(this.marker).join("|");
             let re = new RegExp(exp, "ig");
 
