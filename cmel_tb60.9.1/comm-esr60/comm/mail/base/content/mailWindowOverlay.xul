@@ -1792,11 +1792,11 @@
                           name="bodyPlaintextVsHTMLPref"
                           label="&bodyAllowHTML.label;"
                           oncommand="MsgBodyAllowHTML()"/>
-                <menuitem id="appmenu_bodySanitized"
+                <!--<menuitem id="appmenu_bodySanitized"
                           type="radio"
                           name="bodyPlaintextVsHTMLPref"
                           label="&bodySanitized.label;"
-                          oncommand="MsgBodySanitized()"/>
+                          oncommand="MsgBodySanitized()"/>#5280 Masquage HTML Simple-->
                 <menuitem id="appmenu_bodyAsPlaintext"
                           type="radio"
                           name="bodyPlaintextVsHTMLPref"
@@ -1837,11 +1837,11 @@
                           name="viewFeedBodyHTMLGroup"
                           label="&bodyAllowHTML.label;"
                           oncommand="MsgFeedBodyRenderPrefs(false, 0, 0)"/>
-                <menuitem id="appmenu_bodyFeedSummarySanitized"
+                <!--<menuitem id="appmenu_bodyFeedSummarySanitized"
                           type="radio"
                           name="viewFeedBodyHTMLGroup"
                           label="&bodySanitized.label;"
-                          oncommand="MsgFeedBodyRenderPrefs(false, 3, gDisallow_classes_no_html)"/>
+                          oncommand="MsgFeedBodyRenderPrefs(false, 3, gDisallow_classes_no_html)"/>-->
                 <menuitem id="appmenu_bodyFeedSummaryAsPlaintext"
                           type="radio"
                           name="viewFeedBodyHTMLGroup"
@@ -2728,9 +2728,9 @@
             <menupopup id="viewBodyPopMenu" onpopupshowing="InitViewBodyMenu()">
               <menuitem id="bodyAllowHTML" type="radio" name="bodyPlaintextVsHTMLPref" label="&bodyAllowHTML.label;"
                         accesskey="&bodyAllowHTML.accesskey;" oncommand="MsgBodyAllowHTML()"/>
-              <menuitem id="bodySanitized" type="radio" name="bodyPlaintextVsHTMLPref" label="&bodySanitized.label;"
+              <!--<menuitem id="bodySanitized" type="radio" name="bodyPlaintextVsHTMLPref" label="&bodySanitized.label;"
                         accesskey="&bodySanitized.accesskey;"
-                        oncommand="MsgBodySanitized()"/>
+                        oncommand="MsgBodySanitized()"/>-->
               <menuitem id="bodyAsPlaintext" type="radio" name="bodyPlaintextVsHTMLPref" label="&bodyAsPlaintext.label;"
                         accesskey="&bodyAsPlaintext.accesskey;" oncommand="MsgBodyAsPlaintext()"/>
               <menuitem id="bodyAllParts" type="radio" name="bodyPlaintextVsHTMLPref" label="&bodyAllParts.label;"
@@ -2767,12 +2767,12 @@
                         label="&bodyAllowHTML.label;"
                         accesskey="&bodyAllowHTML.accesskey;"
                         oncommand="MsgFeedBodyRenderPrefs(false, 0, 0)"/>
-              <menuitem id="bodyFeedSummarySanitized"
+              <!--<menuitem id="bodyFeedSummarySanitized"
                         type="radio"
                         name="viewFeedBodyHTMLGroup"
                         label="&bodySanitized.label;"
                         accesskey="&bodySanitized.accesskey;"
-                        oncommand="MsgFeedBodyRenderPrefs(false, 3, gDisallow_classes_no_html)"/>
+                        oncommand="MsgFeedBodyRenderPrefs(false, 3, gDisallow_classes_no_html)"/>-->
               <menuitem id="bodyFeedSummaryAsPlaintext"
                         type="radio"
                         name="viewFeedBodyHTMLGroup"
