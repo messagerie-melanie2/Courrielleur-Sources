@@ -284,7 +284,8 @@ nsresult mime_generate_headers(nsIMsgCompFields *fields,
         (gmtoffset >= 0 ? '+' : '-'),
         ((gmtoffset >= 0 ? gmtoffset : -gmtoffset) / 60),
         ((gmtoffset >= 0 ? gmtoffset : -gmtoffset) % 60));
-  finalHeaders->SetRawHeader("Date", nsDependentCString(dateString), nullptr);
+  //6165 Passage date en JS pour envoi differe
+  //finalHeaders->SetRawHeader("Date", nsDependentCString(dateString), nullptr);
 
   // X-Mozilla-Draft-Info
   if (isDraft)
