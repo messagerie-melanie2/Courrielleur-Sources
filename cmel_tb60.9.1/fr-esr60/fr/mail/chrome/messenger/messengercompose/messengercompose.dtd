@@ -236,6 +236,7 @@
 <!-- Mail Toolbar -->
 <!ENTITY sendButton.label "Envoyer">
 <!ENTITY quoteButton.label "Citer">
+<!ENTITY sendDifButton.label "Différer">
 <!ENTITY addressButton.label "Contacts">
 <!ENTITY attachButton.label "Joindre">
 <!ENTITY spellingButton.label "Orthographe">
@@ -245,6 +246,7 @@
 <!-- Mail Toolbar Tooltips -->
 <!ENTITY sendButton.tooltip "Envoyer le message maintenant">
 <!ENTITY sendlaterButton.tooltip "Envoyer ce message plus tard">
+<!ENTITY sendDifButton.tooltip "Faire une remise différée de votre message">
 <!ENTITY quoteButton.tooltip "Citer le précédent message">
 <!ENTITY addressButton.tooltip "Sélectionner un destinataire du carnet d’adresses">
 <!ENTITY attachButton.tooltip "Inclure une pièce jointe">

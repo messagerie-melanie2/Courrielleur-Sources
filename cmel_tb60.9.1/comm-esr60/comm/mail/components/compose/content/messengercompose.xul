@@ -957,7 +957,14 @@
                later_label="&sendLaterCmd.label;"
                later_tooltiptext="&sendlaterButton.tooltip;">
     </toolbarbutton>
-
+    
+    <!-- 6165: Mise en oeuvre de la Remise différée dans le Courrielleur -->
+    <toolbarbutton class="toolbarbutton-1"
+               id="button-send-dif" label="&sendDifButton.label;"
+               tooltiptext="&sendDifButton.tooltip;"
+               command="cmd_sendDifButton">
+    </toolbarbutton>
+    
     <toolbarbutton class="toolbarbutton-1"
                id="button-contacts" label="&addressButton.label;"
                tooltiptext="&addressButton.tooltip;"

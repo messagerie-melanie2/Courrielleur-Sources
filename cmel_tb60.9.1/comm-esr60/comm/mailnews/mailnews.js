@@ -429,7 +429,9 @@ pref("mail.identity.default.archives_folder_picker_mode", "0");
 // examples: "header1,header2"
 // pref("mail.identity.id1.headers", "header1");
 // user_pref("mail.identity.id1.header.header1", "X-Mozilla-Rocks: True")
-pref("mail.identity.default.headers", "");
+//pref("mail.identity.default.headers", "");
+//pref("mail.identity.id1.header.date_envoi_differe", "X-DateEnvoiDiffere: 1");
+pref("mail.identity.id1.headers", "");
 
 // by default, only collect addresses the user sends to (outgoing)
 // incoming is all spam anyways
