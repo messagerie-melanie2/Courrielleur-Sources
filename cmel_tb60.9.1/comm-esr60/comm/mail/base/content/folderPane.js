@@ -2639,6 +2639,19 @@ var gFolderTreeController = {
     if (folder.server instanceof Ci.nsIImapIncomingServer)
       dualUseFolders = folder.server.dualUseFolders;
 
+    // Permet de calculer la longueur approximative de l'URL windows du dossier
+    function calculateApproximateWinLength(uri)
+    {
+      // On compte le nombre de /
+      var count = uri.split("/").length - 1;
+      // Taille maximum chemin Windows autour de 223, extension .sbd ajoutée à la fin de chaque dossier (4 caractères)
+      var size = uri.length + 4*count;
+      if(size < 200)
+        return true;
+      else
+        return false;
+    }
+  
     function newFolderCallback(aName, aFolder) {
 
       //cm2 - affichage des boites partagees
@@ -2656,8 +2669,15 @@ var gFolderTreeController = {
       // TODO: Rewrite this logic and also move the opening of alert dialogs from
       // nsMsgLocalMailFolder::CreateSubfolderInternal to here (bug 831190#c16).
       if (aName)
-        aFolder.createSubfolder(aName, msgWindow);
+      {
+        if(calculateApproximateWinLength(folder.URI))
+          aFolder.createSubfolder(aName, msgWindow);
+        else
+          alert("Le chemin vers ce dossier est trop long. Soit le nom du dossier est trop long, soit il existe trop de sous dossiers pour le créer. Essayez de réduire le nom du dossier, ou de le créer à un niveau supèrieur.");
+      }
     }
+    
+    
 
     window.openDialog("chrome://messenger/content/newFolderDialog.xul",
                       "",
@@ -2665,7 +2685,7 @@ var gFolderTreeController = {
                       {folder: folder, dualUseFolders: dualUseFolders,
                        okCallback: newFolderCallback});
   },
-
+  
   /**
    * Opens the dialog to edit the properties for a folder
    *
