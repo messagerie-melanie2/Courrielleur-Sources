@@ -451,7 +451,7 @@
              toolbarname="&showComposeToolbarCmd.label;"
              accesskey="&showComposeToolbarCmd.accesskey;"
              customizable="true"
-             defaultset="button-send,separator,button-address,button-attach,spellingButton,button-security,separator,button-save,spring,throbber-box"
+             defaultset="button-send,separator,button-send-dif,separator,button-address,button-attach,spellingButton,button-security,separator,button-save,spring,throbber-box"
              context="toolbar-context-menu">
       <toolbarbutton id="button-send"
                      class="toolbarbutton-1"
@@ -466,6 +466,13 @@
        <observes element="Communicator:WorkMode"
                  attribute="offline"/>
       </toolbarbutton>
+      
+      <!-- 6165: Mise en oeuvre de la Remise différée dans le Courrielleur -->
+        <toolbarbutton class="toolbarbutton-1"
+                id="button-send-dif" label="&sendDifButton.label;"
+                tooltiptext="&sendDifButton.tooltip;"
+                command="cmd_sendDifButton">
+        </toolbarbutton>
 
       <toolbarbutton id="button-address"
                      class="toolbarbutton-1"

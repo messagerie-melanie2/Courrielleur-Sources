@@ -1130,7 +1130,7 @@
 #ifdef XP_MACOSX
            iconsize="small"
 #endif
-           defaultset="button-send,separator,button-address,spellingButton,button-security,button-save,spring,button-attach"
+           defaultset="button-send,separator,button-send-dif,separator,button-address,spellingButton,button-security,button-save,spring,button-attach"
            customizable="true"
            context="toolbar-context-menu">
   </toolbar>

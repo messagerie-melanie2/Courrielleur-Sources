@@ -428,6 +428,142 @@ var progressListener = {
     }
 };
 
+// 6165 Commande envoi différé
+var sendDifDate = null;
+function cmdSendDifButton()
+{
+  sendDifDate = GetDateFromPrefs();
+  window.openDialog("chrome://courrielleur/content/envoi-differe.xul",
+                    "",
+                    "chrome,center,titlebar,modal,width=400,height=250",
+                    {composeWindow:top.window,
+                     msgCompFields:gMsgCompose.compFields},window.self,sendDifDate);
+                     
+  sendDifDate = new Date(window.status);
+  let btnSendDif = document.getElementById("button-send-dif");
+  if(sendDifDate != null && !isNaN(sendDifDate))
+  {
+    btnSendDif.style.borderColor = "#5AC100";
+    btnSendDif.style.borderWidth = "2px";
+    btnSendDif.label = GetDisplayDate(sendDifDate);
+  }
+  else
+  {
+    btnSendDif.style.borderColor = "";
+    btnSendDif.style.borderWidth = "0px";
+    btnSendDif.label = "Différer";
+  }
+}
+
+function SendDifLoad(date)
+{
+  // Si on a une date de remise différée
+  if(date != null && !isNaN(date))
+  {
+    // On affiche le bon texte
+    document.getElementById("senddif-active").style.display = "block";
+    document.getElementById("senddif-inactive").style.display = "none";
+    
+    // On charge la valeur de la date dans le label concerné
+    document.getElementById("senddif-label").value = GetDisplayDate(date);
+
+    // On positionne les valeurs des champs correctement
+    let minutes = date.getMinutes() < 10 ? '0'+date.getMinutes() : date.getMinutes();
+    let hours = date.getHours() < 10 ? '0'+date.getHours() : date.getHours();
+    setElementValue("senddif-date", date);
+    document.getElementById("senddif-hour").value = hours+":"+minutes;
+  }
+  else
+  {
+    // On affiche le bon texte
+    document.getElementById("senddif-active").style.display = "none";
+    document.getElementById("senddif-inactive").style.display = "block";
+  }
+}
+
+function SendDifEnable()
+{  
+  var date = document.getElementById("senddif-date").value;
+  var hour = document.getElementById("senddif-hour").value;
+  date.setHours(hour.split(":")[0], hour.split(":")[1]);
+  
+  var maxdate = new Date(Date.now());
+  maxdate.setDate(maxdate.getDate() + 30);
+  
+  // La date est invalide pour un envois différé
+  if(date > maxdate)
+    alert("La remise différée de votre mail ne peut excéder le " + GetDisplayDate(maxdate) + ".");
+  else if(date < Date.now())
+    alert("La date/heure spécifiée est antérieure à la date actuelle.");
+  else
+  {
+    window.arguments[1].status = GetIsoDate(date);
+    window.close();
+  }
+}
+
+function SendDifRemove()
+{
+  window.arguments[1].status = "";
+  window.close();
+}
+
+function GetIsoDate(date)
+{
+  let monthtmp = date.getMonth()+1;
+  let day = date.getDate() < 10 ? '0'+date.getDate() : date.getDate();
+  let month = monthtmp < 10 ? '0'+monthtmp : monthtmp;
+  let year = date.getFullYear();
+  let minutes = date.getMinutes() < 10 ? '0'+date.getMinutes() : date.getMinutes();
+  let hours = date.getHours() < 10 ? '0'+date.getHours() : date.getHours();
+  
+  let newDate = year+"-" +month+"-"+day+" "+hours+":"+minutes+":"+date.getSeconds();
+  return newDate;
+}
+
+function GetDisplayDate(date)
+{ 
+  let monthtmp = date.getMonth()+1;
+  let day = date.getDate() < 10 ? '0'+date.getDate() : date.getDate();
+  let month = monthtmp < 10 ? '0'+monthtmp : monthtmp;
+  let year = date.getFullYear();
+  let minutes = date.getMinutes() < 10 ? '0'+date.getMinutes() : date.getMinutes();
+  let hours = date.getHours() < 10 ? '0'+date.getHours() : date.getHours();
+  
+  let newDate = day+"/"+month+"/"+year+" "+hours+":"+minutes;
+  return newDate;
+}
+
+function GetDateFromPrefs()
+{
+  let pref = Services.prefs.getCharPref("mail.identity.timestamp_envoi_differe");
+  if(pref != null && !isNaN(pref) && pref != 0)
+  {
+    let date = new Date(parseInt(pref));
+    if(date < Date.now())
+      return GetDefaultDifDate();
+    else
+      return date;
+  }
+  else
+    return GetDefaultDifDate();
+}
+
+function GetDefaultDifDate()
+{
+  let defaultDate = new Date(Date.now());
+  if(defaultDate.getMinutes() < 20)
+  {
+    defaultDate.setMinutes(30);
+  }
+  else
+  {
+    defaultDate.setHours(defaultDate.getHours()+1);
+    defaultDate.setMinutes(0);
+  }
+  return defaultDate;
+}
+
 var defaultController =
 {
   supportsCommand: function(command)
@@ -1824,6 +1960,21 @@ function CheckValidEmailAddress(aTo, aCC, aBCC)
 
 function SendMessage()
 {
+  // 6165: Mise en oeuvre de la Remise différée dans le Courrielleur
+  // Si on a une date d'envoi différé, on active le header correspondant
+  let dateNow = new Date(Date.now());
+  Services.prefs.setCharPref("mail.identity.id1.header.custom_date", "Date: " + dateNow.toString());
+  if(sendDifDate != null && !isNaN(sendDifDate))
+  {
+    // Stockage timestamp pour envoi différé
+    Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", sendDifDate.valueOf());
+    Services.prefs.setCharPref("mail.identity.id1.header.date_envoi_differe", "X-DateEnvoiDiffere: " + sendDifDate.valueOf()/1000);
+    Services.prefs.setCharPref("mail.identity.id1.headers", "date_envoi_differe, custom_date");
+  }
+  else
+    Services.prefs.setCharPref("mail.identity.id1.headers", "custom_date");
+    
+
   let sendInBackground = Services.prefs.getBoolPref("mailnews.sendInBackground");
   if (sendInBackground && AppConstants.platform != "macosx") {
     let enumerator = Services.wm.getEnumerator(null);
