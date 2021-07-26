@@ -753,17 +753,24 @@ function GetDisplayDate(date)
 
 function GetDateFromPrefs()
 {
-  let pref = Services.prefs.getCharPref("mail.identity.timestamp_envoi_differe");
-  if(pref != null && !isNaN(pref) && pref != 0)
+  try
   {
-    let date = new Date(parseInt(pref));
-    if(date < Date.now())
-      return GetDefaultDifDate();
+    let pref = Services.prefs.getCharPref("mail.identity.timestamp_envoi_differe");
+    if(pref != null && !isNaN(pref) && pref != 0)
+    {
+      let date = new Date(parseInt(pref));
+      if(date < Date.now())
+        return GetDefaultDifDate();
+      else
+        return date;
+    }
     else
-      return date;
+      return GetDefaultDifDate();
   }
-  else
+  catch(ex)
+  {
     return GetDefaultDifDate();
+  }
 }
 
 function GetDefaultDifDate()
@@ -3836,22 +3843,63 @@ function CheckValidEmailAddress(aMsgCompFields)
   return true;
 }
 
+
+// Returns the same Date.now than original Cpp header code nsMsgCompUtils.cpp
+function ConvertToCppDate(date)
+{  
+  let timezoneString = "";
+  let tmpOffset = date.getTimezoneOffset();
+  let finalOffset = 0;
+  let negativeTimezone = false;
+  if(tmpOffset < 0)
+  {
+    negativeTimezone = true;
+    tmpOffset = tmpOffset*(-1);
+  }
+  while(tmpOffset >= 60)
+  {
+    finalOffset += 1;
+    tmpOffset = tmpOffset - 60;
+  }
+  if(tmpOffset > 0)
+    timezoneString = "+0" + finalOffset.toString() + tmpOffset;
+  else
+    timezoneString = "+0" + finalOffset.toString() + "00";
+  
+  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  let seconds = date.getSeconds() < 10 ? '0'+date.getSeconds() : date.getSeconds();
+  let minutes = date.getMinutes() < 10 ? '0'+date.getMinutes() : date.getMinutes();
+  let hours = date.getHours() < 10 ? '0'+date.getHours() : date.getHours();
+  
+  let finalCppDate = days[date.getDay()] + ", " + date.getDate() + " " + months[date.getMonth()] + " " + 
+  date.getFullYear() + " " + hours + ":" + minutes + ":" + seconds + " " + timezoneString;
+
+  return finalCppDate;
+}
+
 function SendMessage()
 {
   // 6165: Mise en oeuvre de la Remise différée dans le Courrielleur
   // Si on a une date d'envoi différé, on active le header correspondant
-  let dateNow = new Date(Date.now());
-  Services.prefs.setCharPref("mail.identity.id1.header.custom_date", "Date: " + dateNow.toString());
   if(sendDifDate != null && !isNaN(sendDifDate))
   {
+    // Conversion de la date différée en format utilisé normalement par C++
+    Services.prefs.setCharPref("mail.identity.id1.header.custom_date", "Date: " + ConvertToCppDate(sendDifDate));
+    
     // Stockage timestamp pour envoi différé
     Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", sendDifDate.valueOf());
     Services.prefs.setCharPref("mail.identity.id1.header.date_envoi_differe", "X-DateEnvoiDiffere: " + sendDifDate.valueOf()/1000);
-    Services.prefs.setCharPref("mail.identity.id1.headers", "date_envoi_differe, custom_date");
+    Services.prefs.setCharPref("mail.identity.id1.headers", "date_envoi_differe,custom_date");
   }
   else
-    Services.prefs.setCharPref("mail.identity.id1.headers", "custom_date");
-    
+  {
+    // Sinon on ajoute le header Date (il a été supprimé du C++ dans nsMsgCompUtils.cpp)
+    // Conversion de la date actuelle en format utilisé normalement par C++
+    let dateNow = new Date(Date.now());
+    Services.prefs.setCharPref("mail.identity.id1.header.custom_date", "Date: " + ConvertToCppDate(dateNow));
+    Services.prefs.setCharPref("mail.identity.id1.headers","custom_date");
+  }
 
   let sendInBackground = Services.prefs.getBoolPref("mailnews.sendInBackground");
   if (sendInBackground && (AppConstants.platform != "macosx")) {

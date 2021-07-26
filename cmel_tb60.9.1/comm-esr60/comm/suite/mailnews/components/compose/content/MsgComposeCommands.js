@@ -536,17 +536,24 @@ function GetDisplayDate(date)
 
 function GetDateFromPrefs()
 {
-  let pref = Services.prefs.getCharPref("mail.identity.timestamp_envoi_differe");
-  if(pref != null && !isNaN(pref) && pref != 0)
+  try
   {
-    let date = new Date(parseInt(pref));
-    if(date < Date.now())
-      return GetDefaultDifDate();
+    let pref = Services.prefs.getCharPref("mail.identity.timestamp_envoi_differe");
+    if(pref != null && !isNaN(pref) && pref != 0)
+    {
+      let date = new Date(parseInt(pref));
+      if(date < Date.now())
+        return GetDefaultDifDate();
+      else
+        return date;
+    }
     else
-      return date;
+      return GetDefaultDifDate();
   }
-  else
+  catch(ex)
+  {
     return GetDefaultDifDate();
+  }
 }
 
 function GetDefaultDifDate()
