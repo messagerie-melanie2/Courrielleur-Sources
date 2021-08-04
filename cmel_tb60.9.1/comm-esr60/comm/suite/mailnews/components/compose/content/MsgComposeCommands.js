@@ -488,7 +488,7 @@ function SendDifEnable()
   date.setHours(hour.split(":")[0], hour.split(":")[1]);
   
   var maxdate = new Date(Date.now());
-  maxdate.setDate(maxdate.getDate() + 30);
+  maxdate.setDate(maxdate.getDate() + 90);
   
   // La date est invalide pour un envois différé
   if(date > maxdate)
