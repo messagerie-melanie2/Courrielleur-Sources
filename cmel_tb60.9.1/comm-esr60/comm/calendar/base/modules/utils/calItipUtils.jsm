@@ -569,36 +569,46 @@ var calitip = {
 
         if (needsCalendar) {
             let calendars = cal.getCalendarManager().getCalendars({}).filter(calitip.isSchedulingCalendar);
-
-            if (aItipItem.receivedMethod == "REQUEST") {
-                // try to further limit down the list to those calendars that
-                // are configured to a matching attendee;
-                let item = aItipItem.getItemList({})[0];
-                let matchingCals = calendars.filter(calendar => calitip.getInvitedAttendee(item, calendar) != null);
-                // if there's none, we will show the whole list of calendars:
-                if (matchingCals.length > 0) {
-                    calendars = matchingCals;
-                }
-            }
-
-            if (calendars.length == 0) {
-                let msg = cal.l10n.getLtnString("imipNoCalendarAvailable");
-                aWindow.alert(msg);
-            } else if (calendars.length == 1) {
-                // There's only one calendar, so it's silly to ask what calendar
-                // the user wants to import into.
-                targetCalendar = calendars[0];
-            } else {
-                // Ask what calendar to import into
-                let args = {};
-                args.calendars = calendars;
-                args.onOk = (aCal) => { targetCalendar = aCal; };
-                args.promptText = cal.l10n.getCalString("importPrompt");
-                aWindow.openDialog("chrome://calendar/content/chooseCalendarDialog.xul",
-                                   "_blank", "chrome,titlebar,modal,resizable", args);
-            }
-
-            if (targetCalendar) {
+            // 6207 - Proposer tous les calendriers
+            // CMel
+            /*let matchingCals=null;
+             // Fin CMel
+             if (aItipItem.receivedMethod == "REQUEST") {
+                 // try to further limit down the list to those calendars that
+                 // are configured to a matching attendee;
+                 let item = aItipItem.getItemList({})[0];
+                 // CMel
+                 matchingCals = calendars.filter(calendar => calitip.getInvitedAttendee(item, calendar) != null);
+                 // Fin CMel
+                 // if there's none, we will show the whole list of calendars:
+                 if (matchingCals.length > 0) {
+                     calendars = matchingCals;
+                 }
+            }*/
+ 
+             if (calendars.length == 0) {
+                 let msg = cal.l10n.getLtnString("imipNoCalendarAvailable");
+                 aWindow.alert(msg);
+            } 
+            else if (calendars.length == 1) 
+            {
+                 // There's only one calendar, so it's silly to ask what calendar
+                 // the user wants to import into.
+                 targetCalendar = calendars[0];
+             } else {
+                 // Ask what calendar to import into
+                 let args = {};
+                 args.calendars = calendars;
+                 // CMel - 6207 proposer tous les calendriers
+                 args.matchingCals = calendars;//matchingCals;
+                 // Fin CMel
+                 args.onOk = (aCal) => { targetCalendar = aCal; };
+                 args.promptText = cal.l10n.getCalString("importPrompt");
+                 aWindow.openDialog("chrome://calendar/content/chooseCalendarDialog.xul",
+                                    "_blank", "chrome,titlebar,modal,resizable", args);
+             }
+ 
+             if (targetCalendar) {
                 aItipItem.targetCalendar = targetCalendar;
             }
         }
