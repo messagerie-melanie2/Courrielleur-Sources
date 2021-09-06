@@ -70,10 +70,11 @@ var MailOfflineMgr = {
 
   observe: function (aSubject, aTopic, aState)
   {
-    /*if (aTopic == "network:offline-status-changed")
+    // #6216 Recuperation changement de connexion
+    if (aTopic == "network:offline-status-changed")
     {
       this.mailOfflineStateChanged(aState == "offline");
-    }*/
+    }
     if (aTopic == "network:link-status-changed" && (aState == "up" || aState == "down"))
     {
       this.mailOfflineStateChanged(aState == "down");

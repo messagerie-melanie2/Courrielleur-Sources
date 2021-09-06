@@ -6,7 +6,7 @@
 
 # These defines should match application.ini settings
 !define AppName               "Courrielleur"
-!define AppVersion            "8.6.0"
+!define AppVersion            "8.6"
 
 !define GREVersion            @MOZILLA_VERSION@
 !define AB_CD                 "@AB_CD@"
