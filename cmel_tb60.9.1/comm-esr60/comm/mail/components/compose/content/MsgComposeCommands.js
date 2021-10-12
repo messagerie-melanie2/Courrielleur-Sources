@@ -645,7 +645,7 @@ var progressListener = {
     }
 };
 
-// 6165 Commande envoi différé
+// #6165 Commande envoi différé
 var sendDifDate = null;
 function cmdSendDifButton()
 {
@@ -705,7 +705,7 @@ function SendDifEnable()
   date.setHours(hour.split(":")[0], hour.split(":")[1]);
   
   var maxdate = new Date(Date.now());
-  maxdate.setDate(maxdate.getDate() + 90);
+  maxdate.setDate(maxdate.getDate() + 30);
   
   // La date est invalide pour un envois différé
   if(date > maxdate)
@@ -3409,7 +3409,7 @@ function DoSpellCheckBeforeSend()
  * @param msgType nsIMsgCompDeliverMode of the operation.
  */
 function GenericSendMessage(msgType)
-{
+{  
   // mantis 5129
   if (nsIMsgCompDeliverMode.AutoSaveAsDraft==msgType &&
       !Services.io.offline){
@@ -3458,6 +3458,9 @@ function GenericSendMessage(msgType)
 
 function GenericSendMessageTB(msgType)
 {
+  // #6165: Mise en oeuvre de la Remise différée dans le Courrielleur
+  SetMessageCustomHeaders();
+  
   var msgCompFields = gMsgCompose.compFields;
 
   Recipients2CompFields(msgCompFields);
@@ -3878,29 +3881,54 @@ function ConvertToCppDate(date)
   return finalCppDate;
 }
 
-function SendMessage()
-{
-  // 6165: Mise en oeuvre de la Remise différée dans le Courrielleur
-  // Si on a une date d'envoi différé, on active le header correspondant
-  if(sendDifDate != null && !isNaN(sendDifDate))
+function SetMessageCustomHeaders()
+{  
+  // #6246: Envoi différé ne fonctionne pas depuis une BALP: séparation en methode et ajout boucle id
+  // #6165: Mise en oeuvre de la Remise différée dans le Courrielleur pour chaque identity
+  let i = 1;
+  let allHeadersSet = false;
+  while(allHeadersSet != true)
   {
-    // Conversion de la date différée en format utilisé normalement par C++
-    Services.prefs.setCharPref("mail.identity.id1.header.custom_date", "Date: " + ConvertToCppDate(sendDifDate));
+    // Si on a une date d'envoi différé, on active le header correspondant et le header date
+    if(sendDifDate != null && !isNaN(sendDifDate))
+    {
+      // Conversion de la date différée en format utilisé normalement par C++
+      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + ConvertToCppDate(sendDifDate));
+      
+      // Stockage timestamp pour envoi différé
+      Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", sendDifDate.valueOf());
+      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.date_envoi_differe", "X-DateEnvoiDiffere: " + sendDifDate.valueOf()/1000);
+      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".headers", "date_envoi_differe,custom_date");
+    }
+    else
+    {
+      // Sinon on ajoute juste le header Date (il a été supprimé du C++ dans nsMsgCompUtils.cpp)
+      // Conversion de la date actuelle en format utilisé normalement par C++
+      let dateNow = new Date(Date.now());
+      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + ConvertToCppDate(dateNow));
+      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".headers","custom_date");
+    }
+    i++;
     
-    // Stockage timestamp pour envoi différé
-    Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", sendDifDate.valueOf());
-    Services.prefs.setCharPref("mail.identity.id1.header.date_envoi_differe", "X-DateEnvoiDiffere: " + sendDifDate.valueOf()/1000);
-    Services.prefs.setCharPref("mail.identity.id1.headers", "date_envoi_differe,custom_date");
+    try
+    {
+      if(Services.prefs.getCharPref("mail.identity.id"+i.toString()+".headers"))
+      {
+        allHeadersSet = false;
+      }
+      else
+        allHeadersSet = true;
+    }
+    catch
+    {
+      // La pref n'existe pas, tous les header sont renseignés
+      allHeadersSet = true;
+    }
   }
-  else
-  {
-    // Sinon on ajoute le header Date (il a été supprimé du C++ dans nsMsgCompUtils.cpp)
-    // Conversion de la date actuelle en format utilisé normalement par C++
-    let dateNow = new Date(Date.now());
-    Services.prefs.setCharPref("mail.identity.id1.header.custom_date", "Date: " + ConvertToCppDate(dateNow));
-    Services.prefs.setCharPref("mail.identity.id1.headers","custom_date");
-  }
+}
 
+function SendMessage()
+{  
   let sendInBackground = Services.prefs.getBoolPref("mailnews.sendInBackground");
   if (sendInBackground && (AppConstants.platform != "macosx")) {
     let enumerator = Services.wm.getEnumerator(null);

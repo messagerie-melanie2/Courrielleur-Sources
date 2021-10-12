@@ -162,15 +162,7 @@ pref("mail.addr_book.mapit_url.4.name", "chrome://messenger-region/locale/region
 pref("mail.addr_book.mapit_url.4.format", "chrome://messenger-region/locale/region.properties");
 pref("mail.addr_book.mapit_url.5.name", "chrome://messenger-region/locale/region.properties");
 pref("mail.addr_book.mapit_url.5.format", "chrome://messenger-region/locale/region.properties");
-#ifdef MOZ_SUITE
-pref("mailnews.start_page.url", "chrome://messenger-region/locale/region.properties");
-pref("messenger.throbber.url", "chrome://messenger-region/locale/region.properties");
-pref("compose.throbber.url", "chrome://messenger-region/locale/region.properties");
-pref("addressbook.throbber.url", "chrome://messenger-region/locale/region.properties");
-pref("mail.accountwizard.deferstorage", false);
-// |false|: Show both name and address, even for people in my addressbook.
-pref("mail.showCondensedAddresses", false);
-#endif
+//@line 174 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 
 pref("mail.addr_book.view.startupURI", "");
 pref("mail.addr_book.view.startupURIisDefault", false);
@@ -372,9 +364,7 @@ pref("mailnews.customDBHeaders", "");
 // close standalone message window when deleting the displayed message
 pref("mail.close_message_window.on_delete", false);
 
-#ifdef MOZ_SUITE
-pref("mailnews.reuse_message_window", true);
-#endif
+//@line 378 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 
 pref("mailnews.open_window_warning", 10); // warn user if they attempt to open more than this many messages at once
 pref("mailnews.open_tab_warning", 20); // warn user if they attempt to open more than this many messages at once
@@ -432,13 +422,19 @@ pref("mail.identity.default.archives_folder_picker_mode", "0");
 //pref("mail.identity.default.headers", "");
 //pref("mail.identity.id1.header.date_envoi_differe", "X-DateEnvoiDiffere: 1");
 pref("mail.identity.id1.headers", "");
+pref("mail.identity.id2.headers", "");
+pref("mail.identity.id3.headers", "");
+pref("mail.identity.id4.headers", "");
+pref("mail.identity.id5.headers", "");
+pref("mail.identity.id6.headers", "");
+pref("mail.identity.id7.headers", "");
+pref("mail.identity.id8.headers", "");
+pref("mail.identity.id9.headers", "");
+pref("mail.identity.id10.headers", "");
 
 // by default, only collect addresses the user sends to (outgoing)
 // incoming is all spam anyways
-#ifdef MOZ_SUITE
-pref("mail.collect_email_address_incoming", false);
-pref("mail.collect_email_address_newsgroup", false);
-#endif
+//@line 442 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 pref("mail.collect_email_address_outgoing", true);
 // by default, use the Collected Addressbook for collection
 pref("mail.collect_addressbook", "moz-abmdbdirectory://history.mab");
@@ -555,11 +551,9 @@ pref("mail.server.default.autosync_max_age_days", -1);
 pref("mail.server.default.canChangeStoreType", false);
 
 // Store conversion (mbox <-> maildir)
-#ifndef RELEASE_OR_BETA
-pref("mail.store_conversion_enabled", true);
-#else
+//@line 561 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 pref("mail.store_conversion_enabled", false);
-#endif
+//@line 563 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 
 // This is the default store contractID for newly created servers.
 // We don't use mail.server.default because we want to ensure that the
@@ -733,40 +727,26 @@ pref("mail.biff.alert.show_subject", true);
 pref("mail.biff.alert.show_sender",  true);
 pref("mail.biff.alert.preview_length", 40);
 
-#ifdef XP_MACOSX
-pref("mail.biff.play_sound", false);
-#else
+//@line 739 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 pref("mail.biff.play_sound", true);
-#endif
+//@line 741 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 // 0 == default system sound, 1 == user specified wav
 pref("mail.biff.play_sound.type", 0);
 // _moz_mailbeep is a magic key, for the default sound.
 // otherwise, this needs to be a file url
 pref("mail.biff.play_sound.url", "");
 pref("mail.biff.show_alert", true);
-#ifdef XP_WIN
+//@line 748 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 pref("mail.biff.show_tray_icon", true);
 pref("mail.biff.show_balloon", false);
-#elifdef XP_MACOSX
-pref("mail.biff.animate_dock_icon", false);
-#elifdef XP_UNIX
-pref("mail.biff.use_system_alert", true);
-#endif
+//@line 755 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 
 // add jitter to biff interval
 pref("mail.biff.add_interval_jitter", true);
 
-#ifdef MOZ_SUITE
-// if true, check for new mail even when opening non-mail windows
-pref("mail.biff.on_new_window", true);
-#endif
+//@line 763 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 
-#ifdef XP_MACOSX
-// If true, the number used in the Mac OS X dock notification will be the
-// the number of "new" messages, as per the classic Thunderbird definition.
-// Defaults to false, which notifies about the number of unread messages.
-pref("mail.biff.use_new_count_in_mac_dock", false);
-#endif
+//@line 770 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 
 // For feed account serverType=rss sound on biff; if true, mail.biff.play_sound.* settings are used.
 pref("mail.feed.play_sound", false);
@@ -874,25 +854,7 @@ pref("mail.password_protect_local_cache", false);
 // the users last used preference.
 pref("mailnews.import.text.skipfirstrecord", true);
 
-#ifdef MOZ_SUITE
-// automatically scale attached images that are displayed inline
-pref("mail.enable_automatic_image_resizing", true);
-
-#ifdef XP_WIN
-pref("ldap_2.servers.oe.uri", "moz-aboutlookdirectory://oe/");
-pref("ldap_2.servers.oe.description", "chrome://messenger/locale/addressbook/addressBook.properties");
-pref("ldap_2.servers.oe.dirType", 3);
-#endif
-#endif
-#ifdef XP_MACOSX
-pref("ldap_2.servers.osx.uri", "moz-abosxdirectory:///");
-pref("ldap_2.servers.osx.description", "chrome://messenger/locale/addressbook/addressBook.properties");
-pref("ldap_2.servers.osx.dirType", 3);
-pref("mail.notification.sound",             "");
-pref("mail.notification.count.inbox_only", true);
-// Work around bug 482811 by disabling slow script warning for chrome scripts on Mac
-pref("dom.max_chrome_script_run_time", 0);
-#endif
+//@line 896 "d:\Cm2\Prod\cmel-8.6.0T1_win64\comm-esr60\comm\mailnews\mailnews.js"
 
 // For the Empty Junk/Trash confirmation dialogs.
 pref("mailnews.emptyJunk.dontAskAgain", false);
