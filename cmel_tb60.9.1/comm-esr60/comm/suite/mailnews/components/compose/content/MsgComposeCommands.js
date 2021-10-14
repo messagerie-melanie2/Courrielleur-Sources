@@ -3913,11 +3913,7 @@ function SetMessageCustomHeaders()
     try
     {
       if(Services.prefs.getCharPref("mail.identity.id"+i.toString()+".headers"))
-      {
         allHeadersSet = false;
-      }
-      else
-        allHeadersSet = true;
     }
     catch
     {
