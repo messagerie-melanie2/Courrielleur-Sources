@@ -4173,10 +4173,12 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
 
   bool lastStartupWasCrash = CheckLastStartupWasCrash().unwrapOr(false);
 
-  if (CheckArg("purgecaches") || PR_GetEnv("MOZ_PURGE_CACHES") ||
+  // 6020 & 4521 Lenteurs au démarrage : Forcer le clear du cache
+  /*if (CheckArg("purgecaches") || PR_GetEnv("MOZ_PURGE_CACHES") ||
       lastStartupWasCrash) {
     cachesOK = false;
-  }
+  }*/
+  cachesOK = false;
 
   // Every time a profile is loaded by a build with a different version,
   // it updates the compatibility.ini file saying what version last wrote
