@@ -645,6 +645,136 @@ var progressListener = {
     }
 };
 
+// #6282: implémentation du droit à la déconnexion
+var alreadyAnswered = false;
+function DeconnexionRights()
+{
+  let now = new Date(Date.now());
+
+  // Appelé au focus de la fenêtre d'écriture de mail
+  if(!alreadyAnswered && (!IsOpenDay(now) || !IsOpenHour(now)) && DeconnexionRightsUser())
+  {
+    alreadyAnswered = true;
+    if(confirm("Vous essayez d'écrire un mail hors de la plage de travail parametrée.\nVoulez vous activer la remise différée pour l'envoyer dès la prochaine heure ouvrée ?\n"))
+      SetSendDifDateAndDisplay(GetNextWorkHour());
+    else {}
+  }
+}
+
+function GetDateDayName(date)
+{
+  var days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  return days[date.getDay()];
+}
+
+// #6282: implémentation du droit à la déconnexion - retourne true ou false en fonction de l'heure et du jour actuel
+function IsOpenDay(date)
+{
+  // Si le jour n'est pas ouvré
+  if(Services.prefs.getCharPref("mail.workhours.opendays").split("-").includes(GetDateDayName(date)))
+    return true;
+
+  return false;
+}
+function IsOpenHour(date)
+{
+  let hBegin = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[0].split(":")[0];
+  let hEnd = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[1].split(":")[0];
+  let mBegin = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[0].split(":")[1];
+  let mEnd = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[1].split(":")[1];
+
+  // Si on est avant l'heure de départ, ou après l'heure de fin
+  if(date.getHours() < hBegin || date.getHours() > hEnd)
+    return false;
+  else
+  {
+    // Sinon si on est quelques minutes avant l'heure de départ
+    if(date.getHours() == hBegin && date.getMinutes() < mBegin)
+      return false;
+    // Sinon si on est quelques minutes après l'heure de fin
+    if(date.getHours() == hEnd && date.getMinutes() > mEnd)
+      return false;
+  }
+  return true;
+}
+
+// #6282: implémentation du droit à la déconnexion - retourne true si l'utilisateur fait partie du MTE
+function DeconnexionRightsUser()
+{
+  let whitelist = Services.prefs.getCharPref("mail.workhours.whitelist").split(";");
+  let blacklist = Services.prefs.getCharPref("mail.workhours.blacklist").split(";");
+  let currentpath = Services.prefs.getCharPref("anais.anaismoz.chemincourant");
+  let userDn = GetUserDnFromPath(currentpath);
+
+  if(userDn.length != 0)
+  {
+    for (const whitedn of whitelist)
+    {
+      if(userDn.toLowerCase().includes(whitedn.toLowerCase()))
+      {
+        for (const blackdn of blacklist)
+        {
+          if(userDn.toLowerCase().includes(blackdn.toLowerCase()))
+            return false;
+        }
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// #6282 retourne le dn à partir d'un format http://xxx/ou=aaa,ou=bbb ....
+function GetUserDnFromPath(currentpath)
+{
+  let splittedPath = currentpath.split("/");
+  for (const pathValue of splittedPath)
+  {
+    if(pathValue.toLowerCase().includes("ou="))
+      return pathValue;
+  }
+  return "";
+}
+
+function addDays(date, days)
+{
+  var result = new Date(date);
+  result.setDate(result.getDate()+days);
+  return result;
+}
+
+// #6282 retourne la prochaine date ouverte, appelé lorsque la date actuelle est fermée
+function GetNextWorkHour()
+{
+  let now = new Date(Date.now());
+  let nextOpenDate = new Date(Date.now());
+  let safetyCounter = 0;
+
+  let hBegin = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[0].split(":")[0];
+  let hEnd = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[1].split(":")[0];
+  let mBegin = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[0].split(":")[1];
+  let mEnd = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[1].split(":")[1];
+
+  // Si l'heure d'ouverture est passée, il faut forcément ajouter au moins un jour.
+  if ((now.getHours() > hBegin) || (now.getHours() == hBegin && now.getMinutes() > mBegin))
+    nextOpenDate = addDays(nextOpenDate, 1);
+
+  // On ajoute des jours à la date actuelle tant qu'on n'est pas sur un jour ouvré
+  while(!IsOpenDay(nextOpenDate))
+  {
+    nextOpenDate = addDays(nextOpenDate, 1);
+
+    // Si on a bouclé plus de 10 fois, le paramètre est mauvais, on retourne la date actuelle
+    safetyCounter++;
+    if(safetyCounter > 10)
+      return now;
+  }
+
+  // On positionne l'heure à l'ouverture
+  nextOpenDate.setHours(parseInt(hBegin), parseInt(mBegin), 0);
+  return nextOpenDate;
+}
+
 // #6165 Commande envoi différé
 var sendDifDate = null;
 function cmdSendDifButton()
@@ -655,21 +785,8 @@ function cmdSendDifButton()
                     "chrome,center,titlebar,modal,width=400,height=250",
                     {composeWindow:top.window,
                      msgCompFields:gMsgCompose.compFields},window.self,sendDifDate);
-                     
-  sendDifDate = new Date(window.status);
-  let btnSendDif = document.getElementById("button-send-dif");
-  if(sendDifDate != null && !isNaN(sendDifDate))
-  {
-    btnSendDif.style.borderColor = "#5AC100";
-    btnSendDif.style.borderWidth = "2px";
-    btnSendDif.label = GetDisplayDate(sendDifDate);
-  }
-  else
-  {
-    btnSendDif.style.borderColor = "";
-    btnSendDif.style.borderWidth = "0px";
-    btnSendDif.label = "Différer";
-  }
+
+  SetSendDifDateAndDisplay(new Date(window.status));
 }
 
 function SendDifLoad(date)
@@ -695,6 +812,25 @@ function SendDifLoad(date)
     // On affiche le bon texte
     document.getElementById("senddif-active").style.display = "none";
     document.getElementById("senddif-inactive").style.display = "block";
+  }
+}
+
+// #6282: Factorisation pour implémentation du droit à la déconnexion
+function SetSendDifDateAndDisplay(pDate)
+{
+  sendDifDate = pDate;
+  let btnSendDif = document.getElementById("button-send-dif");
+  if(sendDifDate != null && !isNaN(sendDifDate))
+  {
+    btnSendDif.style.borderColor = "#5AC100";
+    btnSendDif.style.borderWidth = "2px";
+    btnSendDif.label = GetDisplayDate(sendDifDate);
+  }
+  else
+  {
+    btnSendDif.style.borderColor = "";
+    btnSendDif.style.borderWidth = "0px";
+    btnSendDif.label = "Différer";
   }
 }
 
@@ -7479,8 +7615,7 @@ var gComposeNotificationBar = {
         null, this.notificationBar.PRIORITY_WARNING_MEDIUM, buttons);
     }
     else {
-      this.notificationBar.getNotificationWithValue("blockedContent")
-        .setAttribute("label", msg);
+      this.notificationBar.getNotificationWithValue("blockedContent").setAttribute("label", msg);
     }
   },
 

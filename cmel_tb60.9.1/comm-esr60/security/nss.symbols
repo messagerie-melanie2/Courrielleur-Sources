@@ -20,6 +20,7 @@ ATOB_ConvertAsciiToItem_Util
 BTOA_ConvertItemToAscii_Util
 BTOA_DataToAscii
 BTOA_DataToAscii_Util
+CERT_VerifyCert
 CERT_AddCertToListHead
 CERT_AddCertToListTail
 CERT_AddExtension
@@ -302,6 +303,7 @@ NSSUTIL_Quote
 #ifdef XP_WIN
 _NSSUTIL_UTF8ToWide
 #endif
+PORT_ArenaGlow
 PK11_AlgtagToMechanism
 PK11_Authenticate
 PK11_ChangePW

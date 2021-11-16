@@ -16,6 +16,16 @@ pref("mail.reply_quote_inline",             false);
 // the From header.
 pref("mail.override_list_reply_to", true);
 
+// #6282 - Droit à la deconnexion
+// Au format H:m-H:m
+pref("mail.workhours.openhours", "7:30-20:00");
+// Au format Mon-Tue-Wed-Thu-Fri-Sat-Sun
+pref("mail.workhours.opendays", "Mon-Tue-Wed-Thu-Fri");
+pref("mail.workhours.senddif", false);
+// #6282 - Droit à la deconnexion, utilisateurs autorisés
+pref("mail.workhours.whitelist", "ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr");
+pref("mail.workhours.blacklist", "ou=DDEA,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=DPMA,ou=AC,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=LBG,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=CM,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=OH,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=TF,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr");
+
 // hidden pref for controlling if the user agent string
 // is displayed in the message pane or not...
 pref("mailnews.headers.showUserAgent",       false);
@@ -39,7 +49,6 @@ pref("mailnews.messageid.openInNewWindow",   false);
 // hidden pref for url which will be used to open  message-ids
 // in browser (%mid ist replaced with the message-id)
 pref("mailnews.messageid_browser.url", "chrome://messenger-region/locale/region.properties");
-
 
 // hidden pref for whether or not to warn when deleting filters. Default YES
 pref("mailnews.filters.confirm_delete", true);
