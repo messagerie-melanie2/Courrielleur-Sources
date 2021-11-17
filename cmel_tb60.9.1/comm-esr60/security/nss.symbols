@@ -303,7 +303,7 @@ NSSUTIL_Quote
 #ifdef XP_WIN
 _NSSUTIL_UTF8ToWide
 #endif
-PORT_ArenaGlow
+PORT_ArenaGrow
 PK11_AlgtagToMechanism
 PK11_Authenticate
 PK11_ChangePW
