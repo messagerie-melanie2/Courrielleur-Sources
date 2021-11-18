@@ -37,7 +37,7 @@
         onunload="ComposeUnload()"
         onload="ComposeLoad()"
         onclose="return DoCommandClose()"
-        onfocus="EditorOnFocus()"
+        onfocus="EditorOnFocus();DeconnexionRights();"
         title="&msgComposeWindow.title;"
         windowtype="msgcompose"
         macanimationtype="document"
