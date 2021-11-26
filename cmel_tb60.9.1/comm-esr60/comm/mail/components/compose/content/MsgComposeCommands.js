@@ -3984,38 +3984,26 @@ function CheckValidEmailAddress(aMsgCompFields)
 
 
 // Returns the same Date.now than original Cpp header code nsMsgCompUtils.cpp
-function ConvertToCppDate(date)
-{  
-  let timezoneString = "";
-  let tmpOffset = date.getTimezoneOffset();
-  let finalOffset = 0;
-  let negativeTimezone = false;
-  if(tmpOffset < 0)
-  {
-    negativeTimezone = true;
-    tmpOffset = tmpOffset*(-1);
-  }
-  while(tmpOffset >= 60)
-  {
-    finalOffset += 1;
-    tmpOffset = tmpOffset - 60;
-  }
-  if(tmpOffset > 0)
-    timezoneString = "+0" + finalOffset.toString() + tmpOffset;
-  else
-    timezoneString = "+0" + finalOffset.toString() + "00";
-  
-  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  let seconds = date.getSeconds() < 10 ? '0'+date.getSeconds() : date.getSeconds();
-  let minutes = date.getMinutes() < 10 ? '0'+date.getMinutes() : date.getMinutes();
-  let hours = date.getHours() < 10 ? '0'+date.getHours() : date.getHours();
-  
-  let finalCppDate = days[date.getDay()] + ", " + date.getDate() + " " + months[date.getMonth()] + " " + 
-  date.getFullYear() + " " + hours + ":" + minutes + ":" + seconds + " " + timezoneString;
+Date.prototype.toMailString = function() {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-  return finalCppDate;
-}
+    let timezoneOffset = this.getTimezoneOffset();
+    const offsetSigne = timezoneOffset < 0 ? '+' : '-';
+    const offsetHours = Math.floor(Math.abs(timezoneOffset) / 60);
+    const offsetMinutes = Math.abs(timezoneOffset) % 60;
+
+    const offset = offsetSigne + ("0" + offsetHours).slice(-2) + ("0" + offsetMinutes).slice(-2);
+
+    return days[this.getDay()] + ", " 
+        + this.getDate() + " " 
+        + months[this.getMonth()] + " " 
+        + this.getFullYear() + " " 
+        + ("0" + this.getHours()).slice(-2) + ":" 
+        + ("0" + this.getMinutes()).slice(-2) + ":" 
+        + ("0" + this.getSeconds()).slice(-2) + " " 
+        + offset;
+};
 
 function SetMessageCustomHeaders()
 {  
@@ -4029,7 +4017,7 @@ function SetMessageCustomHeaders()
     if(sendDifDate != null && !isNaN(sendDifDate))
     {
       // Conversion de la date différée en format utilisé normalement par C++
-      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + ConvertToCppDate(sendDifDate));
+      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + sendDifDate.toMailString());
       
       // Stockage timestamp pour envoi différé
       Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", sendDifDate.valueOf());
@@ -4041,7 +4029,7 @@ function SetMessageCustomHeaders()
       // Sinon on ajoute juste le header Date (il a été supprimé du C++ dans nsMsgCompUtils.cpp)
       // Conversion de la date actuelle en format utilisé normalement par C++
       let dateNow = new Date(Date.now());
-      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + ConvertToCppDate(dateNow));
+      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + dateNow.toMailString());
       Services.prefs.setCharPref("mail.identity.id"+i.toString()+".headers","custom_date");
     }
     i++;
