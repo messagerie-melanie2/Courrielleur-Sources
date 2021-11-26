@@ -652,7 +652,7 @@ function DeconnexionRights()
   let now = new Date(Date.now());
 
   // Appelé au focus de la fenêtre d'écriture de mail
-  if(!alreadyAnswered && (!IsOpenDay(now) || !IsOpenHour(now)) && DeconnexionRightsUser())
+  if(false)//!alreadyAnswered && (!IsOpenDay(now) || !IsOpenHour(now)) && DeconnexionRightsUser())
   {
     alreadyAnswered = true;
     if(confirm("Vous essayez d'écrire un mail hors de la plage de travail parametrée.\nVoulez vous activer la remise différée pour l'envoyer dès la prochaine heure ouvrée ?\n"))

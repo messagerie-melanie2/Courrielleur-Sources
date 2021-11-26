@@ -18,13 +18,13 @@ pref("mail.override_list_reply_to", true);
 
 // #6282 - Droit à la deconnexion
 // Au format H:m-H:m
-pref("mail.workhours.openhours", "7:30-20:00");
+//pref("mail.workhours.openhours", "7:30-20:00");
 // Au format Mon-Tue-Wed-Thu-Fri-Sat-Sun
-pref("mail.workhours.opendays", "Mon-Tue-Wed-Thu-Fri");
-pref("mail.workhours.senddif", false);
+//pref("mail.workhours.opendays", "Mon-Tue-Wed-Thu-Fri");
+//pref("mail.workhours.senddif", false);
 // #6282 - Droit à la deconnexion, utilisateurs autorisés
-pref("mail.workhours.whitelist", "ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr");
-pref("mail.workhours.blacklist", "ou=DDEA,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=DPMA,ou=AC,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=LBG,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=CM,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=OH,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=TF,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr");
+//pref("mail.workhours.whitelist", "ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr");
+//pref("mail.workhours.blacklist", "ou=DDEA,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=DPMA,ou=AC,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=LBG,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=CM,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=OH,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr;ou=TF,ou=melanie,ou=organisation,dc=equipement,dc=gouv,dc=fr");
 
 // hidden pref for controlling if the user agent string
 // is displayed in the message pane or not...
