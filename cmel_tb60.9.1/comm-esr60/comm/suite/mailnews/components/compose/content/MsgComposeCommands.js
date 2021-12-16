@@ -648,17 +648,67 @@ var progressListener = {
 // #6282: implémentation du droit à la déconnexion
 var alreadyAnswered = false;
 function DeconnexionRights()
-{
+{  
   let now = new Date(Date.now());
-
-  // Appelé au focus de la fenêtre d'écriture de mail
-  if(false)//!alreadyAnswered && (!IsOpenDay(now) || !IsOpenHour(now)) && DeconnexionRightsUser())
+  // Appelé au premier focus de la fenêtre d'écriture de mail
+  if(!alreadyAnswered && (!IsOpenDay(now) || !IsOpenHour(now)))// && DeconnexionRightsUser())
   {
     alreadyAnswered = true;
-    if(confirm("Vous essayez d'écrire un mail hors de la plage de travail parametrée.\nVoulez vous activer la remise différée pour l'envoyer dès la prochaine heure ouvrée ?\n"))
-      SetSendDifDateAndDisplay(GetNextWorkHour());
-    else {}
+    if(Services.prefs.getIntPref("mail.identity.timestamp_envoi_differe") != 0)
+    {
+      let date = new Date(Services.prefs.getIntPref("mail.identity.timestamp_envoi_differe")*1000);
+      if(date > Date.now())
+      {
+        let delayDate = GetDateFromPrefs();
+        SetSendDifDateAndDisplay(delayDate, true);
+      }
+      else
+        AskOpenHours();
+    }
+    else
+      AskOpenHours();
   }
+}
+
+function AskOpenHours()
+{
+  window.openDialog("chrome://courrielleur/content/openhours.xul",
+                      "",
+                      "chrome,center,titlebar,modal,width=460,height=370",
+                      {composeWindow:top.window,
+                       msgCompFields:gMsgCompose.compFields},window.self);
+                       
+  switch (window.status)
+  {
+    case "openhours_continue":
+      break;
+    case "openhours_enable":
+      let date = GetNextWorkHour();
+      Services.prefs.setIntPref("mail.identity.timestamp_envoi_differe", Math.floor(date/1000));
+      SetSendDifDateAndDisplay(date);
+      break;
+    case "openhours_close":
+      window.close();
+      break;
+    default:
+      break;
+  }
+}
+
+function OpenHoursContinue()
+{
+  window.arguments[1].status = "openhours_continue";
+  window.close();
+}
+function OpenHoursActivate()
+{
+  window.arguments[1].status = "openhours_enable";
+  window.close();
+}
+function OpenHoursClose()
+{
+  window.arguments[1].status = "openhours_close";
+  window.close();
 }
 
 function GetDateDayName(date)
@@ -670,32 +720,67 @@ function GetDateDayName(date)
 // #6282: implémentation du droit à la déconnexion - retourne true ou false en fonction de l'heure et du jour actuel
 function IsOpenDay(date)
 {
-  // Si le jour n'est pas ouvré
-  if(Services.prefs.getCharPref("mail.workhours.opendays").split("-").includes(GetDateDayName(date)))
+  try
+  {
+    // Paramétré par PACOME au format hh:mm-hh:mm-day/day/day/day
+    let openHoursPrefValue = Services.prefs.getCharPref("mail.identity.openhours");
+    if(openHoursPrefValue  === "none")
+      return true;
+    
+    let openHoursHoursArray = openHoursPrefValue.split("-");
+    let openHoursDaysArray = openHoursHoursArray[2].split("/");
+    
+    // Si le jour est actuel est ouvré
+    if(openHoursDaysArray.includes(GetDateDayName(date)))
+      return true;
+    
+    // Sinon
+    return false;
+  }
+  catch(ex)
+  {
+    // Openhours n'est certainement pas au bon format, on ignore la preference
     return true;
-
-  return false;
+  }
 }
 function IsOpenHour(date)
 {
-  let hBegin = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[0].split(":")[0];
-  let hEnd = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[1].split(":")[0];
-  let mBegin = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[0].split(":")[1];
-  let mEnd = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[1].split(":")[1];
-
-  // Si on est avant l'heure de départ, ou après l'heure de fin
-  if(date.getHours() < hBegin || date.getHours() > hEnd)
-    return false;
-  else
+  try
   {
-    // Sinon si on est quelques minutes avant l'heure de départ
-    if(date.getHours() == hBegin && date.getMinutes() < mBegin)
+    // Paramétré par PACOME au format hh:mm-hh:mm-day/day/day/day
+    let openHoursPrefValue = Services.prefs.getCharPref("mail.identity.openhours");
+
+    if(openHoursPrefValue === "none")
+      return true;
+    
+    let openHoursHoursArray = openHoursPrefValue.split("-");
+    //let openHoursDaysArray = openHoursHoursArray[2].split("/");
+    
+    let hBegin = openHoursHoursArray[0].split(":")[0];
+    let hEnd = openHoursHoursArray[1].split(":")[0];
+    let mBegin = openHoursHoursArray[0].split(":")[1];
+    let mEnd = openHoursHoursArray[1].split(":")[1];
+    
+    // Si on est avant l'heure de départ, ou après l'heure de fin
+    if(date.getHours() < hBegin || date.getHours() > hEnd)
       return false;
-    // Sinon si on est quelques minutes après l'heure de fin
-    if(date.getHours() == hEnd && date.getMinutes() > mEnd)
-      return false;
+    else
+    {
+      // Sinon si on est quelques minutes avant l'heure de départ
+      if(date.getHours() == hBegin && date.getMinutes() < mBegin)
+        return false;
+      // Sinon si on est quelques minutes après l'heure de fin
+      if(date.getHours() == hEnd && date.getMinutes() > mEnd)
+        return false;
+    }
+    
+    return true;
   }
-  return true;
+  catch(ex)
+  {
+    // Openhours n'est certainement pas au bon format, on ignore la preference
+    return true;
+  }
 }
 
 // #6282: implémentation du droit à la déconnexion - retourne true si l'utilisateur fait partie du MTE
@@ -750,10 +835,10 @@ function GetNextWorkHour()
   let nextOpenDate = new Date(Date.now());
   let safetyCounter = 0;
 
-  let hBegin = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[0].split(":")[0];
-  let hEnd = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[1].split(":")[0];
-  let mBegin = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[0].split(":")[1];
-  let mEnd = Services.prefs.getCharPref("mail.workhours.openhours").split("-")[1].split(":")[1];
+  let hBegin = Services.prefs.getCharPref("mail.identity.openhours").split("-")[0].split(":")[0];
+  let hEnd = Services.prefs.getCharPref("mail.identity.openhours").split("-")[1].split(":")[0];
+  let mBegin = Services.prefs.getCharPref("mail.identity.openhours").split("-")[0].split(":")[1];
+  let mEnd = Services.prefs.getCharPref("mail.identity.openhours").split("-")[1].split(":")[1];
 
   // Si l'heure d'ouverture est passée, il faut forcément ajouter au moins un jour.
   if ((now.getHours() > hBegin) || (now.getHours() == hBegin && now.getMinutes() > mBegin))
@@ -782,15 +867,30 @@ function cmdSendDifButton()
   sendDifDate = GetDateFromPrefs();
   window.openDialog("chrome://courrielleur/content/envoi-differe.xul",
                     "",
-                    "chrome,center,titlebar,modal,width=400,height=250",
+                    "chrome,center,titlebar,modal,width=400,height=400",
                     {composeWindow:top.window,
                      msgCompFields:gMsgCompose.compFields},window.self,sendDifDate);
-
-  SetSendDifDateAndDisplay(new Date(window.status));
+                     
+  switch (parseInt(window.status))
+  {
+    case 0:
+      // Annuler
+      break;
+    case 1:
+      // Supprimer
+      SetSendDifDateAndDisplay(null);
+      break;
+    default:
+      // Différer
+      SetSendDifDateAndDisplay(new Date(window.status*1000));
+      break;
+  }  
 }
 
 function SendDifLoad(date)
 {
+  window.arguments[1].status = 0;
+  
   // Si on a une date de remise différée
   if(date != null && !isNaN(date))
   {
@@ -806,6 +906,15 @@ function SendDifLoad(date)
     let hours = date.getHours() < 10 ? '0'+date.getHours() : date.getHours();
     setElementValue("senddif-date", date);
     document.getElementById("senddif-hour").value = hours+":"+minutes;
+    
+    let remember_checkbox = document.getElementById("senddif-remember");
+    if(Services.prefs.getIntPref("mail.identity.timestamp_envoi_differe") != 0)
+      remember_checkbox.checked=true;
+    else
+    {
+      remember_checkbox.checked=false;
+      document.documentElement.getButton("extra1").disabled=true;
+    }
   }
   else
   {
@@ -817,7 +926,7 @@ function SendDifLoad(date)
 
 // #6282: Factorisation pour implémentation du droit à la déconnexion
 function SetSendDifDateAndDisplay(pDate)
-{
+{  
   sendDifDate = pDate;
   let btnSendDif = document.getElementById("button-send-dif");
   if(sendDifDate != null && !isNaN(sendDifDate))
@@ -835,7 +944,7 @@ function SetSendDifDateAndDisplay(pDate)
 }
 
 function SendDifEnable()
-{  
+{
   var date = document.getElementById("senddif-date").value;
   var hour = document.getElementById("senddif-hour").value;
   date.setHours(hour.split(":")[0], hour.split(":")[1]);
@@ -844,20 +953,36 @@ function SendDifEnable()
   maxdate.setDate(maxdate.getDate() + 30);
   
   // La date est invalide pour un envois différé
-  if(date > maxdate)
+  if(date > maxdate)    
     alert("La remise différée de votre mail ne peut excéder le " + GetDisplayDate(maxdate) + ".");
   else if(date < Date.now())
     alert("La date/heure spécifiée est antérieure à la date actuelle.");
   else
   {
-    window.arguments[1].status = GetIsoDate(date);
+    let remember_checkbox = document.getElementById("senddif-remember");
+    let isoDate = GetIsoDate(date);
+    let timeStamp = Math.floor((new Date(isoDate))/1000);
+    
+    if(remember_checkbox.checked)
+      Services.prefs.setIntPref("mail.identity.timestamp_envoi_differe", timeStamp);
+    else
+      Services.prefs.setIntPref("mail.identity.timestamp_envoi_differe", 0);
+    
+    window.arguments[1].status = timeStamp;
     window.close();
   }
 }
 
+function SendDifTemporaryRemove()
+{
+  window.arguments[1].status = 1;
+  window.close();
+}
+
 function SendDifRemove()
 {
-  window.arguments[1].status = "";
+  Services.prefs.setIntPref("mail.identity.timestamp_envoi_differe", 0);
+  window.arguments[1].status = 1;
   window.close();
 }
 
@@ -891,12 +1016,15 @@ function GetDateFromPrefs()
 {
   try
   {
-    let pref = Services.prefs.getCharPref("mail.identity.timestamp_envoi_differe");
-    if(pref != null && !isNaN(pref) && pref != 0)
+    let pref = Services.prefs.getIntPref("mail.identity.timestamp_envoi_differe");
+    if(pref != 0)
     {
-      let date = new Date(parseInt(pref));
+      let date = new Date(pref*1000);
       if(date < Date.now())
+      {
+        Services.prefs.setIntPref("mail.identity.timestamp_envoi_differe", 0);
         return GetDefaultDifDate();
+      }
       else
         return date;
     }
@@ -4020,8 +4148,8 @@ function SetMessageCustomHeaders()
       Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + sendDifDate.toMailString());
       
       // Stockage timestamp pour envoi différé
-      Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", sendDifDate.valueOf());
-      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.date_envoi_differe", "X-DateEnvoiDiffere: " + sendDifDate.valueOf()/1000);
+      //Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", Math.floor(sendDifDate/1000));
+      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.date_envoi_differe", "X-DateEnvoiDiffere: " + Math.floor(sendDifDate/1000));
       Services.prefs.setCharPref("mail.identity.id"+i.toString()+".headers", "date_envoi_differe,custom_date");
     }
     else
@@ -4029,7 +4157,7 @@ function SetMessageCustomHeaders()
       // Sinon on ajoute juste le header Date (il a été supprimé du C++ dans nsMsgCompUtils.cpp)
       // Conversion de la date actuelle en format utilisé normalement par C++
       let dateNow = new Date(Date.now());
-      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + dateNow.toMailString());
+      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + dateNow.toMailString());//ConvertToCppDate(dateNow));
       Services.prefs.setCharPref("mail.identity.id"+i.toString()+".headers","custom_date");
     }
     i++;
