@@ -7412,9 +7412,9 @@ var gAttachmentNotifier =
       mailData = subject + " " + mailData;
 
     if (!async)
-      return GetAttachmentKeywords(mailData, keywordsInCsv);
+      return GetAttachmentKeywords(mailData.toLowerCase(), keywordsInCsv);
 
-    attachmentWorker.postMessage([mailData, keywordsInCsv]);
+    attachmentWorker.postMessage([mailData.toLowerCase(), keywordsInCsv]);
     return null;
   },
 
