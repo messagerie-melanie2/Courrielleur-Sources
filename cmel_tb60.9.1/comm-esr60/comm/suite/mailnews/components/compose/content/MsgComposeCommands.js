@@ -4030,10 +4030,24 @@ function M2ssimoSendMsg(msgcompose, msgtype, identite, compte, msgwindow, progre
     msgcompose.SendMsg(msgtype, identite, compte, msgwindow, progress);
 
   } else {
-    //envoi melanissimo si possible
-    m2sTrace("M2ssimoSendMsg traitement par module d'envoi melanissimo");
-    m2sEcritLog(M2S_LOGS_MODULE, "Traitement par module d'envoi melanissimo");
-    m2sEnvoiMelanissimo(msgcompose, msgtype, identite, compte, msgwindow, progress);
+    //#6466: Avertir d'un envoi avec remise différée qui devrait partir par Mélanissimo
+    if(sendDifDate != null && !isNaN(sendDifDate))
+    {
+      if(confirm("La taille de votre message lui impose d'être pris en charge par un mécanisme qui ne permet pas la remise différée. Voulez-vous continuer avec un envoi immédiat ?"))
+      {
+        //envoi melanissimo si possible
+        m2sTrace("M2ssimoSendMsg traitement par module d'envoi melanissimo");
+        m2sEcritLog(M2S_LOGS_MODULE, "Traitement par module d'envoi melanissimo");
+        m2sEnvoiMelanissimo(msgcompose, msgtype, identite, compte, msgwindow, progress);
+      }
+    }
+    else
+    {
+      //envoi melanissimo si possible
+      m2sTrace("M2ssimoSendMsg traitement par module d'envoi melanissimo");
+      m2sEcritLog(M2S_LOGS_MODULE, "Traitement par module d'envoi melanissimo");
+      m2sEnvoiMelanissimo(msgcompose, msgtype, identite, compte, msgwindow, progress);
+    }
   }
 }
 
