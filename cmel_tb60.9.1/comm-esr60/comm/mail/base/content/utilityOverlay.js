@@ -161,7 +161,11 @@ function goToggleToolbar( id, elementID )
   var element = document.getElementById( elementID );
   if ( toolbar )
   {
-    var isHidden = toolbar.getAttribute("hidden") == "true";
+    // #6689: Au démarrage du Courrielleur, forcer la fermeture du panneau "Recherche d'évènements"
+    var isHidden = false;
+    if(toolbar.getAttribute("hidden") == "true" || toolbar.getAttribute("style").includes("collapse"))
+      var isHidden = true;
+    
     toolbar.setAttribute("hidden", !isHidden);
     if ( element )
       element.setAttribute("checked", isHidden)
