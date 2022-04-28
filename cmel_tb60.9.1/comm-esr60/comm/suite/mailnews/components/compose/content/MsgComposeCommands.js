@@ -4153,42 +4153,52 @@ Date.prototype.toMailString = function() {
 
 function SetMessageCustomHeaders()
 {  
+  // #6700: Champ date non renseigné depuis une BALP et envoi différé ne focntionne pas - Ajout tolérance d'erreurs
   // #6246: Envoi différé ne fonctionne pas depuis une BALP: séparation en methode et ajout boucle id
   // #6165: Mise en oeuvre de la Remise différée dans le Courrielleur pour chaque identity
-  let i = 1;
+  let i = 0;
+  let error = 0;
   let allHeadersSet = false;
   while(allHeadersSet != true)
   {
-    // Si on a une date d'envoi différé, on active le header correspondant et le header date
-    if(sendDifDate != null && !isNaN(sendDifDate))
-    {
-      // Conversion de la date différée en format utilisé normalement par C++
-      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + sendDifDate.toMailString());
-      
-      // Stockage timestamp pour envoi différé
-      //Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", Math.floor(sendDifDate/1000));
-      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.date_envoi_differe", "X-DateEnvoiDiffere: " + Math.floor(sendDifDate/1000));
-      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".headers", "date_envoi_differe,custom_date");
-    }
-    else
-    {
-      // Sinon on ajoute juste le header Date (il a été supprimé du C++ dans nsMsgCompUtils.cpp)
-      // Conversion de la date actuelle en format utilisé normalement par C++
-      let dateNow = new Date(Date.now());
-      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + dateNow.toMailString());//ConvertToCppDate(dateNow));
-      Services.prefs.setCharPref("mail.identity.id"+i.toString()+".headers","custom_date");
-    }
-    i++;
-    
     try
     {
-      if(Services.prefs.getCharPref("mail.identity.id"+i.toString()+".headers"))
-        allHeadersSet = false;
+      i++;
+      if(Services.prefs.getCharPref("mail.identity.id"+i.toString()+".useremail"))
+      {
+        // Si on a une date d'envoi différé, on active le header correspondant et le header date
+        if(sendDifDate != null && !isNaN(sendDifDate))
+        {
+          // Conversion de la date différée en format utilisé normalement par C++
+          Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + sendDifDate.toMailString());
+          
+          // Stockage timestamp pour envoi différé
+          //Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", Math.floor(sendDifDate/1000));
+          Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.date_envoi_differe", "X-DateEnvoiDiffere: " + Math.floor(sendDifDate/1000));
+          Services.prefs.setCharPref("mail.identity.id"+i.toString()+".headers", "date_envoi_differe,custom_date");
+        }
+        else
+        {
+          // Sinon on ajoute juste le header Date (il a été supprimé du C++ dans nsMsgCompUtils.cpp)
+          // Conversion de la date actuelle en format utilisé normalement par C++
+          let dateNow = new Date(Date.now());
+          Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + dateNow.toMailString());//ConvertToCppDate(dateNow));
+          Services.prefs.setCharPref("mail.identity.id"+i.toString()+".headers","custom_date");
+        }
+      }
+      else
+      {
+        error++;
+      }
     }
     catch
     {
-      // La pref n'existe pas, tous les header sont renseignés
-      allHeadersSet = true;
+      error++;
+      // On tolère 10 erreurs d'attribution d'header
+      if(error >= 10)
+      {
+        allHeadersSet = true;
+      }
     }
   }
 }
