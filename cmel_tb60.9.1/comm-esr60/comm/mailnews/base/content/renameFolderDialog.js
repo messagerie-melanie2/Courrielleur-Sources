@@ -5,17 +5,19 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 var dialog;
+var oldName = "";
 
 function onLoad()
 {
   var windowArgs = window.arguments[0];
+  oldName = windowArgs.name.trim();
 
   dialog = {};
 
   dialog.OKButton = document.documentElement.getButton("accept");
 
   dialog.nameField = document.getElementById("name");
-  dialog.nameField.value = windowArgs.name;
+  dialog.nameField.value = oldName;
   dialog.nameField.select();
   dialog.nameField.focus();
 
@@ -30,8 +32,16 @@ function onLoad()
 
 function onOK()
 {
-  dialog.okCallback(dialog.nameField.value, dialog.preselectedFolderURI);
-
+  // #6502: Une BALP dont le nom d'un dossier fini par un "blanc" les sous-dossiers ne sont pas toujours visible depuis le courrielleur
+  // Trim des blancs pour contournement et ajout oldName
+  dialog.nameField = document.getElementById("name");
+  dialog.nameField.value = dialog.nameField.value.trim();
+  
+  if(oldName != dialog.nameField.value)
+  {
+    dialog.okCallback(dialog.nameField.value, dialog.preselectedFolderURI);
+  }
+  
   return true;
 }
 
