@@ -4030,8 +4030,11 @@ function M2ssimoSendMsg(msgcompose, msgtype, identite, compte, msgwindow, progre
     msgcompose.SendMsg(msgtype, identite, compte, msgwindow, progress);
 
   } else {
-    if(msgtype == nsIMsgCompDeliverMode.SaveAsDraft)
+    // #6487: Enregistrement d'une PJ dans les brouillons taille supérieure à 10Mo
+    if(msgtype == nsIMsgCompDeliverMode.SaveAsDraft || msgtype == nsIMsgCompDeliverMode.AutoSaveAsDraft || msgtype == nsIMsgCompDeliverMode.SaveAsTemplate || msgtype == nsIMsgCompDeliverMode.SaveAsFile)
     {
+      gSaveOperationInProgress = false;
+      gSendOperationInProgress = false;
       alert("La taille des pièces jointes dépasse la limite autorisée pour sauvegarder ce message dans vos brouillons.");
     }
     //#6466: Avertir d'un envoi avec remise différée qui devrait partir par Mélanissimo
