@@ -3183,34 +3183,42 @@ function cm2IsFolderBalp(folder) {
 };
 
 //return true si folder est le dossier courrier entrant de boite partagee
-function cm2IsEntrantBalp(folder) {
-  
-  if (!cm2IsFolderBalp(folder))
-    return false;
+function cm2IsEntrantBalp(folder) 
+{
+    //#6746: Disparition des boites et dossiers dans le panneau de gauche (ajout gestion erreur)
+    try
+    {
+        if (!cm2IsFolderBalp(folder))
+            return false;
 
-  if (folder.isServer)
-    return false;
+        if (folder.isServer)
+            return false;
+        
+        if (folder.parent != null && folder.parent.isServer)
+            return false;
 
-  if (folder.parent.isServer)
-    return false;
+        if (folder.parent.parent != null && !folder.parent.parent.isServer)
+            return false;
 
-  if (!folder.parent.parent.isServer)
-    return false;
+        if (FP_LIB_BOITEPARTAGE!=folder.parent.name)
+            return false;
 
-  if (FP_LIB_BOITEPARTAGE!=folder.parent.name)
-    return false;
+        //valider courrier entrant balp
+        var username=folder.username;
+        if (username) {
+            var parts=username.split(".-.");
+            if (2==parts.length &&
+                folder.name==parts[1]){
+            return true;
+            }
+        }
 
-  //valider courrier entrant balp
-  var username=folder.username;
-  if (username) {
-    var parts=username.split(".-.");
-    if (2==parts.length &&
-        folder.name==parts[1]){
-      return true;
+        return false;
     }
-  }
-
-  return false;
+    catch(ex)
+    {
+        return false;
+    }
 };
 
 //retrouve le dossier courrier entrant d'une racine de boite partagee
