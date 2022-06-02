@@ -57,15 +57,24 @@ function onOK()
   var name = dialog.nameField.value;
   var uri = dialog.folder;
 
-  // do name validity check?
-
-  // make sure name ends in  "/" if folder to create can only contain folders
-  if ((dialog.folderType == FOLDERS) && !name.endsWith("/"))
-    dialog.okCallback(name + "/", dialog.folder);
+  // #6502: Une BALP dont le nom d'un dossier fini par un "blanc" les sous-dossiers ne sont pas toujours visible depuis le courrielleur
+  // Trim des blancs pour contournement et ajout oldName
+  name = name.trim();
+  if(name == "")
+  {
+    alert("Saisissez un nom de dossier.");
+  }
   else
-    dialog.okCallback(name, dialog.folder);
-
-  return true;
+  {
+    // make sure name ends in  "/" if folder to create can only contain folders
+    if ((dialog.folderType == FOLDERS) && !name.endsWith("/"))
+      dialog.okCallback(name + "/", dialog.folder);
+    else
+      dialog.okCallback(name, dialog.folder);
+    
+    return true;
+  }
+  return false;
 }
 
 function onFoldersOnly()

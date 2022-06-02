@@ -37,6 +37,12 @@ function onOK()
   dialog.nameField = document.getElementById("name");
   dialog.nameField.value = dialog.nameField.value.trim();
   
+  if(dialog.nameField.value == "")
+  {
+    alert("Saisissez un nom de dossier.");
+    return false;
+  }
+  
   if(oldName != dialog.nameField.value)
   {
     dialog.okCallback(dialog.nameField.value, dialog.preselectedFolderURI);
