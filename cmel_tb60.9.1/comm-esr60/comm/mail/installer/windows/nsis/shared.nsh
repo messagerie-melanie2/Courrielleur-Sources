@@ -649,7 +649,7 @@
     ${WriteRegStr2} $1 "$0" "DisplayVersion" "${AppVersion}" 0
     ${WriteRegStr2} $1 "$0" "InstallLocation" "$8" 0
     ; ${WriteRegStr2} $1 "$0" "Publisher" "Mozilla" 0
-    ${WriteRegStr2} $1 "$0" "Publisher" "SG/SNUM/UNI/DETN" 0
+    ${WriteRegStr2} $1 "$0" "Publisher" "SG/DNUM/UNI/DETN" 0
     ${WriteRegStr2} $1 "$0" "UninstallString" "$8\uninstall\helper.exe" 0
     ${WriteRegStr2} $1 "$0" "URLInfoAbout" "${URLInfoAbout}" 0
     ${WriteRegStr2} $1 "$0" "URLUpdateInfo" "${URLUpdateInfo}" 0
