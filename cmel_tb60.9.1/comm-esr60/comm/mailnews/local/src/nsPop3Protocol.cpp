@@ -2299,9 +2299,11 @@ int32_t nsPop3Protocol::SendPassword()
     PR_snprintf(&plain_string[1], 256, "%.255s", m_username.get());
     uint32_t len = std::min(m_username.Length(), 255u) + 2;  // We include two <NUL> characters.
     NS_ConvertUTF16toUTF8 passwordUTF8(m_passwordResult);
-    if (passwordUTF8.Length() > 255)  // RFC 4616: passwd; up to 255 octets
-      passwordUTF8.Truncate(255);
-    PR_snprintf(&plain_string[len], 256, "%s", passwordUTF8.get());
+    
+    // #6958: Mots de passe tronqués au dela de 256 caractères
+    if (passwordUTF8.Length() > 9999)  // RFC 4616: passwd; up to 255 octets
+      passwordUTF8.Truncate(9999);
+    PR_snprintf(&plain_string[len], 10000, "%s", passwordUTF8.get());
     len += passwordUTF8.Length();
 
     char *base64Str = PL_Base64Encode(plain_string, len, nullptr);
