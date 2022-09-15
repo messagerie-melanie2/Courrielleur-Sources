@@ -1516,8 +1516,8 @@ nsresult nsSmtpProtocol::AuthLoginStep1()
     // Up to 255 octets.
     if (username.Length() > 255)  // RFC 4616: authcid; up to 255 octets
       username.Truncate(255);
-    if (passwordUTF8.Length() > 255)  // RFC 4616: passwd; up to 255 octets
-      passwordUTF8.Truncate(255);
+    if (passwordUTF8.Length() > 9999)  // RFC 4616: passwd; up to 255 octets
+      passwordUTF8.Truncate(9999);
 
     // RFC 4616: UTF8NUL authcid UTF8NUL passwd
     char plain_string[513];
@@ -1632,8 +1632,8 @@ nsresult nsSmtpProtocol::AuthLoginStep2()
     else if (m_currentAuthMethod == SMTP_AUTH_PLAIN_ENABLED)
     {
       MOZ_LOG(SMTPLogModule, mozilla::LogLevel::Debug, ("PLAIN auth, step 2"));
-      if (passwordUTF8.Length() > 255)
-        passwordUTF8.Truncate(255);
+      if (passwordUTF8.Length() > 9999)
+        passwordUTF8.Truncate(9999);
       char *base64Str = PL_Base64Encode(passwordUTF8.get(), passwordUTF8.Length(), nullptr);
       // Base64 encoding of 255 bytes gives 340 bytes.
       PR_snprintf(buffer, sizeof(buffer), "%s" CRLF, base64Str);
@@ -1646,8 +1646,8 @@ nsresult nsSmtpProtocol::AuthLoginStep2()
         mozilla::Preferences::GetBool("mail.smtp_login_pop3_user_pass_auth_is_latin1", true);
       if (useLatin1)
         passwordUTF8 = NS_LossyConvertUTF16toASCII(password);  // Don't use UTF-8 after all.
-      if (passwordUTF8.Length() > 255)
-        passwordUTF8.Truncate(255);
+      if (passwordUTF8.Length() > 9999)
+        passwordUTF8.Truncate(9999);
       char *base64Str = PL_Base64Encode(passwordUTF8.get(), passwordUTF8.Length(), nullptr);
       // Base64 encoding of 255 bytes gives 340 bytes.
       PR_snprintf(buffer, sizeof(buffer), "%s" CRLF, base64Str);
