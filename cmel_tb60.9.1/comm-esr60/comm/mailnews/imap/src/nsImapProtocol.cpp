@@ -5911,8 +5911,8 @@ nsresult nsImapProtocol::AuthLogin(const char *userName, const nsString &aPasswo
     if (GetServerStateParser().LastCommandSuccessful())
     {
       // RFC 4616
-      char plain_string[513];
-      memset(plain_string, 0, 513);
+      char plain_string[10257];
+      memset(plain_string, 0, 10257);
       PR_snprintf(&plain_string[1], 256, "%.255s", userName);
       uint32_t len = std::min(PL_strlen(userName), 255u) + 2;  // We include two <NUL> characters.
       PR_snprintf(&plain_string[len], 10000, "%.9999s", password.get());
