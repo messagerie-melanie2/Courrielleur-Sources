@@ -945,7 +945,7 @@ pref("mailnews.database.dbcache.logging.console", "None");
 
 // -- Global Database (gloda) options
 // Should the indexer be enabled?
-pref("mailnews.database.global.indexer.enabled", false);
+pref("mailnews.database.global.indexer.enabled", true);
 // Should we output warnings and errors to the "error console"?
 pref("mailnews.database.global.logging.console", false);
 // Should we output all output levels to stdout via dump?

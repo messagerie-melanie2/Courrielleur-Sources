@@ -6,7 +6,7 @@
 #define NSG_MAPI_MAIN_H_
 
 #define        MAX_NAME_LEN    256
-#define        MAX_PW_LEN      256
+#define        MAX_PW_LEN      10000
 #define        MAX_SESSIONS    50
 #define        MAPI_SENDCOMPLETE_EVENT   "SendCompletionEvent"
 

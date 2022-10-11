@@ -14,7 +14,7 @@
 
 
 #define           MAX_NAME_LEN    256
-#define           MAX_PW_LEN      256
+#define           MAX_PW_LEN      10000
 #define           MAX_MSGINFO_LEN 512
 #define           MAX_POINTERS    32
 
