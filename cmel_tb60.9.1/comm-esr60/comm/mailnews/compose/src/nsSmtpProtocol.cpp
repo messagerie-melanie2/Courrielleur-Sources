@@ -1461,7 +1461,8 @@ nsresult nsSmtpProtocol::AuthLoginStep1()
   // The longest message we are going to send is:
   // "AUTH PLAIN " followed by 684 bytes (base64 encoding of 512 bytes of
   // username/password) followed by CRLF: 11 + 684 + 2 + 1 = 698.
-  char buffer[698];
+  // Augmentation taille pwd pour token Kerberos: 10256 au lieu de 512
+  char buffer[10698];
   nsresult rv;
   nsresult status = NS_OK;
   nsCString username;
@@ -1507,8 +1508,8 @@ nsresult nsSmtpProtocol::AuthLoginStep1()
     nsAutoCString response;
     rv = DoNtlmStep1(username, password, response);
     PR_snprintf(buffer, sizeof(buffer), TestFlag(SMTP_AUTH_NTLM_ENABLED) ?
-                                        "AUTH NTLM %.512s" CRLF :
-                                        "%.512s" CRLF, response.get());
+                                        "AUTH NTLM %.10256s" CRLF :
+                                        "%.10256s" CRLF, response.get());
   }
   else if (m_currentAuthMethod == SMTP_AUTH_PLAIN_ENABLED)
   {
