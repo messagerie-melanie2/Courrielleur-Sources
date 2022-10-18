@@ -1521,11 +1521,11 @@ nsresult nsSmtpProtocol::AuthLoginStep1()
       passwordUTF8.Truncate(9999);
 
     // RFC 4616: UTF8NUL authcid UTF8NUL passwd
-    char plain_string[513];
+    char plain_string[10513];
     memset(plain_string, 0, 513);
     PR_snprintf(&plain_string[1], 256, "%s", username.get());
     int len = username.Length() + 2;  // We include two <NUL> characters.
-    PR_snprintf(&plain_string[len], 256, "%s", passwordUTF8.get());
+    PR_snprintf(&plain_string[len], 10000, "%s", passwordUTF8.get());
     len += passwordUTF8.Length();
 
     base64Str = PL_Base64Encode(plain_string, len, nullptr);
@@ -1577,7 +1577,7 @@ nsresult nsSmtpProtocol::AuthLoginStep2()
     // We use 515 characters here so we can transmit a 512 byte response followed by CRLF.
     // User name and encoded digest, currently 255 + 1 + 2*16 bytes, will need
     // 4 * (255 + 1 + 32) / 3 = 384 bytes when base64 encoded.
-    char buffer[515];
+    char buffer[10515];
     if (m_currentAuthMethod == SMTP_AUTH_CRAM_MD5_ENABLED)
     {
       MOZ_LOG(SMTPLogModule, mozilla::LogLevel::Debug, ("CRAM auth, step 2"));
