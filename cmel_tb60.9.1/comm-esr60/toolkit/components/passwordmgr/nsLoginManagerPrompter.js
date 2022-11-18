@@ -490,18 +490,22 @@ LoginManagerPrompter.prototype = {
     
     // cm2
     var ok;
-    if (NON_MELANIE2!=srvm2) {
+    if (NON_MELANIE2!=srvm2) 
+    {
       this.log("[nsLoginManagerPrompter.js] promptPassword demande de mot de passe melanie2");
       
       aPassword.value=hostname;
       ok=PacomeAuthUtils.PromptMdp(this._window, username, aPassword);
       checkBox.value=false;
       
-    } else {
- 
-      ok = this._promptService.promptPassword(this._window, aDialogTitle,
+    } 
+    else 
+    {
+      //#7060: Erreur lors de l'ajout d'un compte externe sans mémorisation de mdp
+      /*ok = this._promptService.promptPassword(this._window, aDialogTitle,
                                                  aText, aPassword,
-                                                 checkBoxLabel, checkBox);
+                                                 checkBoxLabel, checkBox);*/
+      ok = Services.prompt.promptPassword(this._chromeWindow, aDialogTitle, aText, aPassword, checkBoxLabel, checkBox);
     }
     // fin cm2    
 
