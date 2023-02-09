@@ -512,8 +512,19 @@ function OnLoadMessenger()
   // We also don't want the account wizard to open if any sort of account exists
   //if (verifyAccounts(LoadPostAccountWizard, false, AutoConfigWizard))
   if (verifyAccounts(LoadPostAccountWizard, false, cm2ExecPacome)){
-    pacomeDemarre();
-    LoadPostAccountWizard();
+    // DGGN: Si on a des comptes, mais aucun compte Pacome, on execute l'assistant de 1ere install
+    // au lieu de la procedure de mise a jour
+    const uids=PacomeListeUid();
+    if (null==uids || 0==uids.length){
+       PacomeTrace("Des comptes sont configures, mais aucun compte Pacome");
+       PacomeEcritLog(PACOME_LOGS_MODULE, "Des comptes sont configures, mais aucun compte Pacome ", uids.length);
+       cm2ExecPacome(LoadPostAccountWizard);
+       //LoadPostAccountWizard();
+    } else {
+      console.log('++++++++++++++++++++++++', "pacomeDemarre. On a des comptes Pacome : ", uids.length);
+      pacomeDemarre();
+      LoadPostAccountWizard();
+    }
   }
 
   // Set up the summary frame manager to handle loading pages in the

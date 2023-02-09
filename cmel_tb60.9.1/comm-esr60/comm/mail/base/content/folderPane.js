@@ -3155,12 +3155,16 @@ function setSmartFolderName(aFolder, aName) {
 /*
 * fonctions utilitaires
 */
-const FP_LIB_BOITEPARTAGE="Boite partag\u00e9e";
+const FP_LIB_BOITEPARTAGE=["Boite partag\u00e9e", "Other Users", "user"];
 
 
 //return true si folder est un dossier racine de boite partagee
 function cm2IsRacineBalp(folder) {
   
+  var servname=folder.server.getCharValue("name");
+  if (null==servname || servname.endsWith(" - Organique") || servname.endsWith(" - Specifique"))
+    return false;
+
   if (!folder.isServer)
     return false;
 
@@ -3173,6 +3177,10 @@ function cm2IsRacineBalp(folder) {
 
 //return true si folder est un dossier de boite partagee
 function cm2IsFolderBalp(folder) {
+
+  var servname=folder.server.getCharValue("name");
+  if (null==servname || servname.endsWith(" - Organique") || servname.endsWith(" - Specifique"))
+    return false;
 
   var confid=folder.server.getCharValue("pacome.confid");
 
@@ -3200,7 +3208,7 @@ function cm2IsEntrantBalp(folder)
         if (folder.parent.parent != null && !folder.parent.parent.isServer)
             return false;
 
-        if (FP_LIB_BOITEPARTAGE!=folder.parent.name)
+        if (FP_LIB_BOITEPARTAGE.indexOf(folder.parent.name) == -1)
             return false;
 
         //valider courrier entrant balp
@@ -3263,7 +3271,7 @@ function cm2IsDossierBoitePartage(folder) {
   if (!cm2IsFolderBalp(folder))
     return false;
 
-  if (FP_LIB_BOITEPARTAGE==folder.name)
+  if (FP_LIB_BOITEPARTAGE.indexOf(folder.name)!= -1)
     return true;
 
   return false;
