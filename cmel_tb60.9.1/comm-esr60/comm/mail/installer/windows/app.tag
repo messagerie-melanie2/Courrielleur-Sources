@@ -1,4 +1,4 @@
 ;!@Install@!UTF-8!
-Title="Courrielleur Mel"
+Title="Courrielleur MCE"
 RunProgram="setup.exe"
 ;!@InstallEnd@!
