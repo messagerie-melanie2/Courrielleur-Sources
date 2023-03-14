@@ -3,7 +3,7 @@
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 <!ENTITY  brandShortName        "Courrielleur">
 <!ENTITY  brandShorterName      "Courrielleur">
-<!ENTITY  brandFullName         "Courrielleur Mél">
-<!ENTITY  vendorShortName       "SG/DNUM/UNI/DETN">
+<!ENTITY  brandFullName         "Courrielleur MCE">
+<!ENTITY  vendorShortName       "GN">
 <!ENTITY  trademarkInfo.part1   "Mozilla Thunderbird and the Thunderbird logos
                                  are trademarks of the Mozilla Foundation.">

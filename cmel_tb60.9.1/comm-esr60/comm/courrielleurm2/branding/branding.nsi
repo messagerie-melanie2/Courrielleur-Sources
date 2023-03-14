@@ -39,9 +39,9 @@
 
 # BrandFullNameInternal is used for some registry and file system values
 # instead of BrandFullName and typically should not be modified.
-!define BrandFullNameInternal "Courrielleur Mel"
-!define BrandFullName         "Courrielleur Mél"
-!define CompanyName           "SG/DNUM/UNI/DETN"
+!define BrandFullNameInternal "Courrielleur MCE"
+!define BrandFullName         "Courrielleur MCE"
+!define CompanyName           "GN"
 !define URLInfoAbout          "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
 !define URLUpdateInfo         "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
 !define SurveyURL             "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
