@@ -959,11 +959,11 @@
     </toolbarbutton>
     
     <!-- 6165: Mise en oeuvre de la Remise différée dans le Courrielleur -->
-    <toolbarbutton class="toolbarbutton-1"
+    <!--<toolbarbutton class="toolbarbutton-1"
                id="button-send-dif" label="&sendDifButton.label;"
                tooltiptext="&sendDifButton.tooltip;"
                command="cmd_sendDifButton">
-    </toolbarbutton>
+    </toolbarbutton>-->
     
     <toolbarbutton class="toolbarbutton-1"
                id="button-contacts" label="&addressButton.label;"
@@ -1123,6 +1123,8 @@
     </toolbaritem>
 
   </toolbarpalette>
+  <!-- #6165: Mise en oeuvre de la Remise différée dans le Courrielleur -->
+  <!-- defaultset="button-send,separator,button-send-dif,separator,button-address,spellingButton,button-security,button-save,spring,button-attach"-->
   <toolbar id="composeToolbar2" class="chromeclass-toolbar"
            toolbarname="&showCompositionToolbarCmd.label;"
            accesskey="&showCompositionToolbarCmd.accesskey;"
@@ -1130,7 +1132,7 @@
 #ifdef XP_MACOSX
            iconsize="small"
 #endif
-           defaultset="button-send,separator,button-send-dif,separator,button-address,spellingButton,button-security,button-save,spring,button-attach"
+           defaultset="button-send,separator,button-address,spellingButton,button-security,button-save,spring,button-attach"
            customizable="true"
            context="toolbar-context-menu">
   </toolbar>
