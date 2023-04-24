@@ -1,5 +1,5 @@
 // Default start page
-pref("mailnews.start_page.url","http://etat.m2.e2.rie.gouv.fr/");
+pref("mailnews.start_page.url","http://messagerie.dsic.minint.fr/");
 
 // start page override to load after an update
 pref("mailnews.start_page.override_url","chrome://courrielleur/content/infomaj.xul");
