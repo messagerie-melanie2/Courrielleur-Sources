@@ -261,7 +261,7 @@ Section "Uninstall"
   ${un.RegCleanMain} "Software\PAMELA"
   ${un.RegCleanUninstall}
   ${un.DeleteShortcuts}
-  ; suppression groupe de menus 'Courrielleur Mél'
+  ; suppression groupe de menus 'Courrielleur MCE'
   StrCpy $0 "$INSTDIR\uninstall\${SHORTCUTS_LOG}"
   ${If} ${FileExists} "$0"
     ${un.GetLongPath} "$SMPROGRAMS" $1

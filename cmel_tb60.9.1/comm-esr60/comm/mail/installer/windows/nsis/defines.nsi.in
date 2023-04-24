@@ -17,16 +17,16 @@
 !define AppRegNameMail        "Courrielleur"
 !define AppRegNameNews        "Courrielleur (News)"
 
-!define ClientsRegName        "Courrielleur Mel"
+!define ClientsRegName        "Courrielleur MCE"
 
 !define BrandShortName        "Courrielleur"
 !define PreReleaseSuffix      ""
 !ifndef BrandFullName
-!define BrandFullName         "Courrielleur Mél"
+!define BrandFullName         "Courrielleur MCE"
 !endif
 
 # repertoire d'installation
-!define RepertoireInstall     "Courrielleur Mel"
+!define RepertoireInstall     "Courrielleur MCE"
 
 !define CERTIFICATE_NAME            "Mozilla Corporation"
 !define CERTIFICATE_ISSUER          "DigiCert SHA2 Assured ID Code Signing CA"
