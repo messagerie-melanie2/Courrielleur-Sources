@@ -51,7 +51,7 @@
     <rows id="acctCentralRows">
       <row id="acctCentralHeaderRow">
         <hbox>
-          <image src="chrome://courrielleur/skin/logo-bandeau.png"/>
+          <!--<image src="chrome://courrielleur/skin/logo-bandeau.png"/>-->
           <vbox flex="1">
             <hbox flex="1"/>
             <label id="AccountCentralTitle"/>
