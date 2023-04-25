@@ -307,7 +307,11 @@ LoginManager.prototype = {
     // cm2
     if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.hostname) ||
         NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.formSubmitURL)){
-      log.debug("[nsLoginManager.js] addLogin melanie2");    
+      log.debug("[nsLoginManager.js] addLogin melanie2");
+			if (!PacomeAuthUtils.isUidMdpMemo(login.username)){
+				this._storage.addLogin(login);
+				PacomeAuthUtils.addUidMdpMemo(login.username);
+			}
       return;
     }
     // fin cm2    
@@ -367,7 +371,15 @@ LoginManager.prototype = {
     if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.hostname) ||
         NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.formSubmitURL)){
       log.debug("[nsLoginManager.js] removeLogin melanie2");
-      PacomeAuthUtils.modifyMdpPacome(login.username, null);      
+      PacomeAuthUtils.modifyMdpPacome(login.username, null);
+			if (PacomeAuthUtils.isUidMdpMemo(login.username)){
+				let loginM2=PacomeAuthUtils.findLoginToRemove(login.username);
+				if (null!=loginM2){
+					this._storage.removeLogin(loginM2);
+					PacomeAuthUtils.delUidMdpMemo(login.username);
+				}
+				else log.debug("[nsLoginManager.js] removeLogin loginM2 inexistant");
+			}
       return;
     }
     // fin cm2
@@ -386,7 +398,9 @@ LoginManager.prototype = {
     if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(newLogin.hostname) ||
         NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(newLogin.formSubmitURL)){
       log.debug("[nsLoginManager.js] modifyLogin melanie2");
-      PacomeAuthUtils.modifyMdpPacome(newLogin.username, newLogin.password);      
+      PacomeAuthUtils.modifyMdpPacome(newLogin.username, newLogin.password);
+			if (PacomeAuthUtils.isUidMdpMemo(newLogin.username))
+				this._storage.modifyLogin(oldLogin, newLogin);
       return;
     }
     // fin cm2
@@ -560,7 +574,6 @@ LoginManager.prototype = {
     LoginHelper.checkHostnameValue(origin);
 
     let uri = Services.io.newURI(origin);
-    
     // cm2
     if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(origin)){
       log.debug("[nsLoginManager.js] setLoginSavingEnabled M2");
