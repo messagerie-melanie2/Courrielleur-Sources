@@ -850,8 +850,23 @@ LoginManagerPrompter.prototype = {
     let promptlistener={
 
       onPromptStart : function() {
+				let res=false;
+				var [hostname, httpRealm] = self._getAuthTarget(aChannel, aAuthInfo);
+				// Looks for existing logins to prefill the prompt with.
+				let foundLogins = LoginHelper.searchLoginsWithObject({
+					hostname,
+					httpRealm,
+					schemeUpgrades: LoginHelper.schemeUpgrades,
+					pacome:1,
+				});
 
-        let res=self.promptAuth(aChannel, aLevel, aAuthInfo);
+				if (foundLogins.length > 0) {
+					aAuthInfo.username=foundLogins[0].username;
+					aAuthInfo.password=foundLogins[0].password;
+					res=true;
+				}
+				else
+					 res=self.promptAuth(aChannel, aLevel, aAuthInfo);
  
         if (res) {
           this.onPromptAuthAvailable();
