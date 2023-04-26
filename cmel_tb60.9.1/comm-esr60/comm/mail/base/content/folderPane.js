@@ -2596,7 +2596,11 @@ ftvItem.prototype = {
       }
     }
     if (null!=corbeille){
-      this._children.push(new ftvItem(corbeille));
+			if (Services.prefs.prefHasUserValue("courrielleur.balp.corbeille") &&
+					Services.prefs.getBoolPref("courrielleur.balp.corbeille"))
+					corbeille.clearFlag(nsMsgFolderFlags.Trash);
+			else
+				this._children.push(new ftvItem(corbeille));
     } else {
       //#6039 réduction des messages au démarrage
       //Services.console.logStringMessage("folderPane.js construitFilsRacine null==corbeille");
