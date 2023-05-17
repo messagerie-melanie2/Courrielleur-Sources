@@ -394,6 +394,13 @@ Section "-Application" APP_IDX
   ${GetLongPath} "$INSTDIR\${FileMainEXE}" $8
   StrCpy $2 "$\"$8$\" -osint -url $\"%1$\""
 
+  ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
+  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCR "courrielleur" "URL Protocol" ""
+  WriteRegStr HKCR "courrielleur\shell" "" ""
+  WriteRegStr HKCR "courrielleur\shell\open" "" ""
+  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %%1"
+
   ; In Win8, the delegate execute handler picks up the value in FirefoxURL and
   ; FirefoxHTML to launch the desktop browser when it needs to.
   ${AddDisabledDDEHandlerValues} "FirefoxHTML-$AppUserModelID" "$2" "$8,1" \
