@@ -129,4 +129,8 @@ else:
 
 CONFIGURE_SUBST_FILES += ['.cargo/config']
 
+FINAL_TARGET_PP_FILES += [
+    'gendarmerie.cfg'
+]
+
 include('build/templates.mozbuild')
