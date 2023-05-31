@@ -640,16 +640,16 @@ Section "-Application" APP_IDX
   !endif
 
   ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
-  DeleteRegKey HKCR "courrielleur\shell\open\command"
-  DeleteRegKey HKCR "courrielleur\shell\open"
-  DeleteRegKey HKCR "courrielleur\shell"
-  DeleteRegKey HKCR "courrielleur"  
+  DeleteRegKey HKCU "Software\Classes\courrielleur\shell\open\command"
+  DeleteRegKey HKCU "Software\Classes\courrielleur\shell\open"
+  DeleteRegKey HKCU "Software\Classes\courrielleur\shell"
+  DeleteRegKey HKCU "Software\Classes\courrielleur"  
 
-  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mél"
-  WriteRegStr HKCR "courrielleur" "URL Protocol" ""
-  WriteRegStr HKCR "courrielleur\shell" "" ""
-  WriteRegStr HKCR "courrielleur\shell\open" "" ""
-  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %%1"
+  WriteRegStr HKCU "Software\Classes\courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCU "Software\Classes\courrielleur" "URL Protocol" ""
+  WriteRegStr HKCU "Software\Classes\courrielleur\shell" "" ""
+  WriteRegStr HKCU "Software\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr HKCU "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 SectionEnd
 
 ; Cleanup operations to perform at the end of the installation.
