@@ -182,6 +182,26 @@ Page custom preSummary leaveSummary
 ; Install Files Page
 !insertmacro MUI_PAGE_INSTFILES
 
+; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
+; Suppression des dossiers dans le registre
+DeleteRegKey HKCU "Software\Classes\courrielleur\shell\open\command"
+DeleteRegKey HKCU "Software\Classes\courrielleur\shell\open"
+DeleteRegKey HKCU "Software\Classes\courrielleur\shell"
+DeleteRegKey HKCU "Software\Classes\courrielleur"  
+
+; Creation des dossiers dans le registre
+WriteRegStr HKCU "Software\Classes\courrielleur" "" ""
+WriteRegStr HKCU "Software\Classes\courrielleur\shell" "" ""
+WriteRegStr HKCU "Software\Classes\courrielleur\shell\open" "" ""
+WriteRegStr HKCU "Software\Classes\courrielleur\shell\open\command" "" ""
+
+; Ajout des valeurs de registre SSO
+WriteRegStr HKCU "Software\Classes\courrielleur" "" "Courrielleur Mél"
+WriteRegStr HKCU "Software\Classes\courrielleur" "URL Protocol" ""
+WriteRegStr HKCU "Software\Classes\courrielleur\shell" "" ""
+WriteRegStr HKCU "Software\Classes\courrielleur\shell\open" "" ""
+WriteRegStr HKCU "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
+
 ; Finish Page
 !define MUI_FINISHPAGE_TITLE_3LINES
 !define MUI_FINISHPAGE_RUN
@@ -638,18 +658,6 @@ Section "-Application" APP_IDX
       ${AddMaintCertKeys}
     ${EndIf}
   !endif
-
-  ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
-  DeleteRegKey HKCU "Software\Classes\courrielleur\shell\open\command"
-  DeleteRegKey HKCU "Software\Classes\courrielleur\shell\open"
-  DeleteRegKey HKCU "Software\Classes\courrielleur\shell"
-  DeleteRegKey HKCU "Software\Classes\courrielleur"  
-
-  WriteRegStr HKCU "Software\Classes\courrielleur" "" "Courrielleur Mél"
-  WriteRegStr HKCU "Software\Classes\courrielleur" "URL Protocol" ""
-  WriteRegStr HKCU "Software\Classes\courrielleur\shell" "" ""
-  WriteRegStr HKCU "Software\Classes\courrielleur\shell\open" "" ""
-  WriteRegStr HKCU "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 SectionEnd
 
 ; Cleanup operations to perform at the end of the installation.
