@@ -184,23 +184,23 @@ Page custom preSummary leaveSummary
 
 ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
 ; Suppression des dossiers dans le registre
-DeleteRegKey HKCU "Software\Classes\courrielleur\shell\open\command"
-DeleteRegKey HKCU "Software\Classes\courrielleur\shell\open"
-DeleteRegKey HKCU "Software\Classes\courrielleur\shell"
-DeleteRegKey HKCU "Software\Classes\courrielleur"  
+DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell\open\command"
+DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell\open"
+DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell"
+DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur"  
 
 ; Creation des dossiers dans le registre
-WriteRegStr HKCU "Software\Classes\courrielleur" "" ""
-WriteRegStr HKCU "Software\Classes\courrielleur\shell" "" ""
-WriteRegStr HKCU "Software\Classes\courrielleur\shell\open" "" ""
-WriteRegStr HKCU "Software\Classes\courrielleur\shell\open\command" "" ""
+WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "" ""
+WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell" "" ""
+WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open" "" ""
+WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open\command" "" ""
 
 ; Ajout des valeurs de registre SSO
-WriteRegStr HKCU "Software\Classes\courrielleur" "" "Courrielleur Mél"
-WriteRegStr HKCU "Software\Classes\courrielleur" "URL Protocol" ""
-WriteRegStr HKCU "Software\Classes\courrielleur\shell" "" ""
-WriteRegStr HKCU "Software\Classes\courrielleur\shell\open" "" ""
-WriteRegStr HKCU "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
+WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "" "Courrielleur Mél"
+WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "URL Protocol" ""
+WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell" "" ""
+WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open" "" ""
+WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 
 ; Finish Page
 !define MUI_FINISHPAGE_TITLE_3LINES
