@@ -182,26 +182,6 @@ Page custom preSummary leaveSummary
 ; Install Files Page
 !insertmacro MUI_PAGE_INSTFILES
 
-; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
-; Suppression des dossiers dans le registre
-DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell\open\command"
-DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell\open"
-DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell"
-DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur"  
-
-; Creation des dossiers dans le registre
-WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "" ""
-WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell" "" ""
-WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open" "" ""
-WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open\command" "" ""
-
-; Ajout des valeurs de registre SSO
-WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "" "Courrielleur Mél"
-WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "URL Protocol" ""
-WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell" "" ""
-WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open" "" ""
-WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
-
 ; Finish Page
 !define MUI_FINISHPAGE_TITLE_3LINES
 !define MUI_FINISHPAGE_RUN
@@ -1344,6 +1324,26 @@ Function .onInit
   ${EndUnless}
   SetRegView 64
 !endif
+
+  ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
+  ; Suppression des dossiers dans le registre
+  DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell\open\command"
+  DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell\open"
+  DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell"
+  DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur"  
+
+  ; Creation des dossiers dans le registre
+  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "" ""
+  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell" "" ""
+  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open\command" "" ""
+
+  ; Ajout des valeurs de registre SSO
+  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "URL Protocol" ""
+  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell" "" ""
+  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 
   ${InstallOnInitCommon} "$(WARN_MIN_SUPPORTED_OSVER_CPU_MSG)"
 
