@@ -1327,23 +1327,21 @@ Function .onInit
 
   ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
   ; Suppression des dossiers dans le registre
-  DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell\open\command"
-  DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell\open"
-  DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur\shell"
-  DeleteRegKey HKLM "SOFTWARE\Classes\courrielleur"  
+  DeleteRegKey SHCTX "Software\Classes\courrielleur\shell\open\command"
+  DeleteRegKey SHCTX "Software\Classes\courrielleur\shell\open"
+  DeleteRegKey SHCTX "Software\Classes\courrielleur\shell"
+  DeleteRegKey SHCTX "Software\Classes\courrielleur"
 
   ; Creation des dossiers dans le registre
-  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "" ""
-  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell" "" ""
-  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open" "" ""
-  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open\command" "" ""
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "" ""
+  WriteRegStr SHCTX "Software\Classes\courrielleur\shell" "" ""
+  WriteRegStr SHCTX "Software\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr SHCTX "Software\Classes\courrielleur\shell\open\command" "" ""
 
   ; Ajout des valeurs de registre SSO
-  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "" "Courrielleur Mél"
-  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur" "URL Protocol" ""
-  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell" "" ""
-  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open" "" ""
-  WriteRegStr HKLM "SOFTWARE\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "" "Courrielleur Mél"
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "URL Protocol" ""
+  WriteRegStr SHCTX "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 
   ${InstallOnInitCommon} "$(WARN_MIN_SUPPORTED_OSVER_CPU_MSG)"
 
