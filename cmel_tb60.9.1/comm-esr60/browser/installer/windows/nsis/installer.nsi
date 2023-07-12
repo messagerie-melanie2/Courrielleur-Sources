@@ -1343,6 +1343,9 @@ Function .onInit
   WriteRegStr SHCTX "Software\Classes\courrielleur" "URL Protocol" ""
   WriteRegStr SHCTX "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 
+  WriteRegStr HKLM "Software\Mozilla" "regTest" "test softwaremozilla"
+  WriteRegStr HKLM "Software\Classes" "regTest" "test classes"
+
   ${InstallOnInitCommon} "$(WARN_MIN_SUPPORTED_OSVER_CPU_MSG)"
 
   !insertmacro InitInstallOptionsFile "options.ini"
