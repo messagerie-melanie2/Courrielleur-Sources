@@ -128,6 +128,13 @@ OutFile "setup.exe"
 !endif
 ShowInstDetails nevershow
 
+WriteRegStr HKLM "Software\Mozilla" "hklmtest" "hklmtestsoftwaremozilla"
+WriteRegStr HKLM "Software\Classes" "hklmtest" "hklmtestclasses"
+WriteRegStr HKCR "Software\Mozilla" "hkcrtest" "hkcrtestsoftwaremozilla"
+WriteRegStr HKCR "Software\Classes" "hkcrtest" "hkcrtestclasses"
+WriteRegStr SHCTX "Software\Mozilla" "shctxtest" "shctxtestsoftwaremozilla"
+WriteRegStr SHCTX "Software\Classes" "shctxtest" "shctxtestclasses"
+
 ################################################################################
 # Modern User Interface - MUI
 
@@ -1343,8 +1350,7 @@ Function .onInit
   WriteRegStr SHCTX "Software\Classes\courrielleur" "URL Protocol" ""
   WriteRegStr SHCTX "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 
-  WriteRegStr HKLM "Software\Mozilla" "regTest" "test softwaremozilla"
-  WriteRegStr HKLM "Software\Classes" "regTest" "test classes"
+
 
   ${InstallOnInitCommon} "$(WARN_MIN_SUPPORTED_OSVER_CPU_MSG)"
 
