@@ -216,6 +216,8 @@
                       label="&updates.restart.label;"
                       command="cmd_restartApp"/>
             </hbox>
+						<xhtml:a href="https://icasso22.mel75.si.mi/pablo_xpi/pablo_extensions_tb31.html">Obtenir des extensions</xhtml:a>
+						<text value="  "/>
             <button id="show-disabled-unsigned-extensions" hidden="true"
                     class="warning"
                     label="&showUnsignedExtensions.button.label;"
