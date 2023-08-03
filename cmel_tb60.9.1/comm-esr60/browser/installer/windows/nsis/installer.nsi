@@ -128,13 +128,6 @@ OutFile "setup.exe"
 !endif
 ShowInstDetails nevershow
 
-WriteRegStr HKLM "Software\Mozilla" "hklmtest" "hklmtestsoftwaremozilla"
-WriteRegStr HKLM "Software\Classes" "hklmtest" "hklmtestclasses"
-WriteRegStr HKCR "Software\Mozilla" "hkcrtest" "hkcrtestsoftwaremozilla"
-WriteRegStr HKCR "Software\Classes" "hkcrtest" "hkcrtestclasses"
-WriteRegStr SHCTX "Software\Mozilla" "shctxtest" "shctxtestsoftwaremozilla"
-WriteRegStr SHCTX "Software\Classes" "shctxtest" "shctxtestclasses"
-
 ################################################################################
 # Modern User Interface - MUI
 
@@ -1331,26 +1324,6 @@ Function .onInit
   ${EndUnless}
   SetRegView 64
 !endif
-
-  ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
-  ; Suppression des dossiers dans le registre
-  DeleteRegKey SHCTX "Software\Classes\courrielleur\shell\open\command"
-  DeleteRegKey SHCTX "Software\Classes\courrielleur\shell\open"
-  DeleteRegKey SHCTX "Software\Classes\courrielleur\shell"
-  DeleteRegKey SHCTX "Software\Classes\courrielleur"
-
-  ; Creation des dossiers dans le registre
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "" ""
-  WriteRegStr SHCTX "Software\Classes\courrielleur\shell" "" ""
-  WriteRegStr SHCTX "Software\Classes\courrielleur\shell\open" "" ""
-  WriteRegStr SHCTX "Software\Classes\courrielleur\shell\open\command" "" ""
-
-  ; Ajout des valeurs de registre SSO
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "" "Courrielleur Mél"
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "URL Protocol" ""
-  WriteRegStr SHCTX "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
-
-
 
   ${InstallOnInitCommon} "$(WARN_MIN_SUPPORTED_OSVER_CPU_MSG)"
 

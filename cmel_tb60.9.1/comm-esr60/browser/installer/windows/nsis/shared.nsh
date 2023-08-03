@@ -512,6 +512,35 @@
   WriteRegStr ${RegKey} "$0\InstallInfo" "HideIconsCommand" "$\"$7$\" /HideShortcuts"
   WriteRegStr ${RegKey} "$0\InstallInfo" "ShowIconsCommand" "$\"$7$\" /ShowShortcuts"
   WriteRegStr ${RegKey} "$0\InstallInfo" "ReinstallCommand" "$\"$7$\" /SetAsDefaultAppGlobal"
+
+  ; #7689
+  WriteRegStr HKLM "Software\Mozilla" "hklmtest" "hklmtestsoftwaremozillabis"
+  WriteRegStr HKLM "Software\Classes" "hklmtest" "hklmtestclassesbis"
+  WriteRegStr HKCR "Software\Mozilla" "hkcrtest" "hkcrtestsoftwaremozillabis"
+  WriteRegStr HKCR "Software\Classes" "hkcrtest" "hkcrtestclassesbis"
+  WriteRegStr SHCTX "Software\Mozilla" "shctxtest" "shctxtestsoftwaremozillabis"
+  WriteRegStr SHCTX "Software\Classes" "shctxtest" "shctxtestclassesbis"
+  WriteRegStr ${RegKey} "Software\Mozilla" "regkeytest" "regkeytestsoftwaremozillabis"
+  WriteRegStr ${RegKey} "Software\Classes" "regkeytest" "regkeytestclassesbis"
+
+  ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
+  ; Suppression des dossiers dans le registre
+  DeleteRegKey ${RegKey} "Software\Classes\courrielleur\shell\open\command"
+  DeleteRegKey ${RegKey} "Software\Classes\courrielleur\shell\open"
+  DeleteRegKey ${RegKey} "Software\Classes\courrielleur\shell"
+  DeleteRegKey ${RegKey} "Software\Classes\courrielleur"
+
+  ; Creation des dossiers dans le registre
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "" ""
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur\shell" "" ""
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur\shell\open\command" "" ""
+
+  ; Ajout des valeurs de registre SSO
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "" "Courrielleur Mél"
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "URL Protocol" ""
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
+
   WriteRegDWORD ${RegKey} "$0\InstallInfo" "IconsVisible" 1
 
   WriteRegStr ${RegKey} "$0\shell\open\command" "" "$\"$8$\""
