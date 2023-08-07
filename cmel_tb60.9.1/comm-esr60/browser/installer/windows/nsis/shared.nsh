@@ -514,14 +514,8 @@
   WriteRegStr ${RegKey} "$0\InstallInfo" "ReinstallCommand" "$\"$7$\" /SetAsDefaultAppGlobal"
 
   ; #7689
-  WriteRegStr HKLM "Software\Mozilla" "hklmtest" "hklmtestsoftwaremozillabis"
-  WriteRegStr HKLM "Software\Classes" "hklmtest" "hklmtestclassesbis"
-  WriteRegStr HKCR "Software\Mozilla" "hkcrtest" "hkcrtestsoftwaremozillabis"
-  WriteRegStr HKCR "Software\Classes" "hkcrtest" "hkcrtestclassesbis"
-  WriteRegStr SHCTX "Software\Mozilla" "shctxtest" "shctxtestsoftwaremozillabis"
-  WriteRegStr SHCTX "Software\Classes" "shctxtest" "shctxtestclassesbis"
-  WriteRegStr ${RegKey} "Software\Mozilla" "regkeytest" "regkeytestsoftwaremozillabis"
-  WriteRegStr ${RegKey} "Software\Classes" "regkeytest" "regkeytestclassesbis"
+  WriteRegStr ${RegKey} "$0\InstallInfo" "SSO" "$\"$8$\""
+  WriteRegStr ${RegKey} "$0\InstallInfo" "test" "$\"$8$\" /testSSOinstallinfos"
 
   ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
   ; Suppression des dossiers dans le registre
