@@ -39,6 +39,13 @@
 
   ClearErrors
   WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
+
+  ; #7689
+  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses1"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses1"
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses1"
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses1"
+
   ${If} ${Errors}
     StrCpy $TmpVal "HKCU"
   ${Else}
@@ -207,6 +214,12 @@
     WriteRegDWORD HKCU "$R1" "IconsVisible" 0
   ${EndIf}
 
+  ; #7689
+  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses2"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses2"
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses2"
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses2"
+
   SetShellVarContext all  ; Set $DESKTOP to All Users
   ${Unless} ${FileExists} "$DESKTOP\${BrandShortName}.lnk"
     SetShellVarContext current  ; Set $DESKTOP to the current user's desktop
@@ -273,6 +286,12 @@
   ${If} ${AtLeastWin8}
     WriteRegDWORD HKCU "$R1" "IconsVisible" 1
   ${EndIf}
+
+  ; #7689
+  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses3"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses3"
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses3"
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses3"
 
   SetShellVarContext all  ; Set $DESKTOP to All Users
   ${Unless} ${FileExists} "$DESKTOP\${BrandShortName}.lnk"
@@ -514,14 +533,10 @@
   WriteRegStr ${RegKey} "$0\InstallInfo" "ReinstallCommand" "$\"$7$\" /SetAsDefaultAppGlobal"
 
   ; #7689
-  WriteRegStr HKLM "Software\Mozilla" "hklmtest" "hklmtestsoftwaremozillabis"
-  WriteRegStr HKLM "Software\Classes" "hklmtest" "hklmtestclassesbis"
-  WriteRegStr HKCR "Software\Mozilla" "hkcrtest" "hkcrtestsoftwaremozillabis"
-  WriteRegStr HKCR "Software\Classes" "hkcrtest" "hkcrtestclassesbis"
-  WriteRegStr SHCTX "Software\Mozilla" "shctxtest" "shctxtestsoftwaremozillabis"
-  WriteRegStr SHCTX "Software\Classes" "shctxtest" "shctxtestclassesbis"
-  WriteRegStr ${RegKey} "Software\Mozilla" "regkeytest" "regkeytestsoftwaremozillabis"
-  WriteRegStr ${RegKey} "Software\Classes" "regkeytest" "regkeytestclassesbis"
+  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesbis4"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclassesbis4"
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclassesbis4"
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclassesbis4"
 
   ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
   ; Suppression des dossiers dans le registre
@@ -604,6 +619,12 @@
       DeleteRegValue HKCU "Software\Mozilla\${AppName}\32to64DidMigrate" "$1"
     ${EndIf}
   ${EndIf}
+
+  ; #7689
+  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses5"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses5"
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses5"
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses5"
 
   ClearErrors
   ReadRegDWORD $2 HKCU "Software\Mozilla\${AppName}\32to64DidMigrate" "$1"
@@ -953,6 +974,13 @@
     ;  old updater.exe (which will still have this signature).
     WriteRegStr HKLM "$R0\1" "name" "${CERTIFICATE_NAME_PREVIOUS}"
     WriteRegStr HKLM "$R0\1" "issuer" "${CERTIFICATE_ISSUER_PREVIOUS}"
+
+    ; #7689
+    WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses6"
+    WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses6"
+    WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses6"
+    WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses6"
+
     ${If} ${RunningX64}
       SetRegView lastused
     ${EndIf}

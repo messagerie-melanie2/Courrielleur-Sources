@@ -353,6 +353,13 @@ Section "-Application" APP_IDX
 
   ClearErrors
   WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
+
+  ; #7689
+  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses7"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses7"
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses7"
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses7"
+
   ${If} ${Errors}
     StrCpy $TmpVal "HKCU" ; used primarily for logging
   ${Else}
@@ -1018,6 +1025,13 @@ Function preComponents
   ClearErrors
   WriteRegStr HKLM "Software\Mozilla" \
               "${BrandShortName}InstallerTest" "Write Test"
+
+  ; #7689
+  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses8"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses8"
+  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses8"
+  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses8"
+
   ${If} ${Errors}
     ClearErrors
     Abort
