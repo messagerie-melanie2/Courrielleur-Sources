@@ -191,6 +191,18 @@ ChangeUI IDD_VERIFY "${NSISDIR}\Contrib\UIs\default.exe"
 ################################################################################
 # Install Sections
 
+
+; #7689
+${If} ${RunningX64}
+    SetRegView 64
+${EndIf}
+WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses13"
+WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses13"
+WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses13"
+WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses13"
+WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword13"
+WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword13"
+
 ; Cleanup operations to perform at the start of the installation.
 Section "-InstallStartCleanup"
   SetDetailsPrint both
@@ -556,7 +568,7 @@ Section "-Application" APP_IDX
     ${Else}
       ${LogMsg} "** ERROR Adding Shortcut: $SMPROGRAMS\${BrandFullName}\${BrandFullName} (Choix du profil).lnk"
     ${EndIf}
-    
+
     ; menu sans echec
     CreateShortCut "$SMPROGRAMS\${BrandFullName}\${BrandFullName} (Mode sans ${U+00E9}chec).lnk" "$INSTDIR\${FileMainEXE}" \
                    "-safe-mode" "$INSTDIR\${FileMainEXE}" 0
