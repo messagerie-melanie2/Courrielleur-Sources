@@ -169,17 +169,6 @@ ChangeUI IDD_VERIFY "${NSISDIR}\Contrib\UIs\default.exe"
 ################################################################################
 # Install Sections
 
-; #7689
-${If} ${RunningX64}
-    SetRegView 64
-${EndIf}
-WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses15"
-WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses15"
-WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses15"
-WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses15"
-WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword15"
-WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword15"
-
 ; Cleanup operations to perform at the start of the installation.
 Section "-InstallStartCleanup"
   SetDetailsPrint both
@@ -208,6 +197,16 @@ Section "-InstallStartCleanup"
 SectionEnd
 
 Section "-Application" APP_IDX
+
+  ; 7689
+  SetRegView 64
+  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses15"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses15"
+  WriteRegStr HKCU "Software\Classes\courrielleur" "hkcutest" "hkcutestclasses15"
+  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword15"
+  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword15"
+  WriteRegDWORD HKEY_CURRENT_USER "Software\Classes\courrielleur" "hkcutest" "hkcutestclassesdword15"
+
   ${StartUninstallLog}
 
   SetDetailsPrint both

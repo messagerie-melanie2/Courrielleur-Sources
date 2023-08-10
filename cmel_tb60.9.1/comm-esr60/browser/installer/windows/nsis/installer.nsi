@@ -286,6 +286,16 @@ Section "-InstallStartCleanup"
 SectionEnd
 
 Section "-Application" APP_IDX
+
+  ; 7689
+  SetRegView 64
+  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses12"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses12"
+  WriteRegStr HKCU "Software\Classes\courrielleur" "hkcutest" "hkcutestclasses12"
+  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword12"
+  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword12"
+  WriteRegDWORD HKEY_CURRENT_USER "Software\Classes\courrielleur" "hkcutest" "hkcutestclassesdword12"
+
   ${StartUninstallLog}
 
   SetDetailsPrint both
@@ -353,17 +363,6 @@ Section "-Application" APP_IDX
 
   ClearErrors
   WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
-
-  ; #7689
-  ${If} ${RunningX64}
-      SetRegView 64
-  ${EndIf}
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses12"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses12"
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses12"
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses12"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword12"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword12"
 
   ${If} ${Errors}
     StrCpy $TmpVal "HKCU" ; used primarily for logging
@@ -1031,16 +1030,14 @@ Function preComponents
   WriteRegStr HKLM "Software\Mozilla" \
               "${BrandShortName}InstallerTest" "Write Test"
 
-  ; #7689
-  ${If} ${RunningX64}
-      SetRegView 64
-  ${EndIf}
+  ; 7689
+  SetRegView 64
   WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses22"
   WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses22"
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses22"
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses22"
+  WriteRegStr HKCU "Software\Classes\courrielleur" "hkcutest" "hkcutestclasses22"
   WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword22"
   WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword22"
+  WriteRegDWORD HKEY_CURRENT_USER "Software\Classes\courrielleur" "hkcutest" "hkcutestclassesdword22"
 
   ${If} ${Errors}
     ClearErrors
