@@ -199,14 +199,28 @@ ChangeUI IDD_VERIFY "${NSISDIR}\Contrib\UIs\default.exe"
 ; Cleanup operations to perform at the start of the installation.
 Section "-InstallStartCleanup"
 
-  ; 7689
+  ; 7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
+  ; Suppression des dossiers dans le registre
   SetRegView 64
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses12"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses12"
-  WriteRegStr HKCU "Software\Classes\courrielleur" "hkcutest" "hkcutestclasses12"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword12"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword12"
-  WriteRegDWORD HKEY_CURRENT_USER "Software\Classes\courrielleur" "hkcutest" "hkcutestclassesdword12"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses1"
+
+  DeleteRegKey HKCR "Software\Classes\courrielleur\shell\open\command"
+  DeleteRegKey HKCR "Software\Classes\courrielleur\shell\open"
+  DeleteRegKey HKCR "Software\Classes\courrielleur\shell"
+  DeleteRegKey HKCR "Software\Classes\courrielleur"
+
+  ; Creation des dossiers dans le registre
+  WriteRegStr HKCR "Software\Classes\courrielleur" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open\command" "" ""
+
+  ; Ajout des valeurs de registre SSO
+  WriteRegStr HKCR "Software\Classes\courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "URL Protocol" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 
   SetDetailsPrint both
   DetailPrint $(STATUS_CLEANUP)
@@ -297,14 +311,28 @@ SectionEnd
 
 Section "-Application" APP_IDX
 
-  ; 7689
+  ; 7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
+  ; Suppression des dossiers dans le registre
   SetRegView 64
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses12"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses12"
-  WriteRegStr HKCU "Software\Classes\courrielleur" "hkcutest" "hkcutestclasses12"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword12"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword12"
-  WriteRegDWORD HKEY_CURRENT_USER "Software\Classes\courrielleur" "hkcutest" "hkcutestclassesdword12"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses2"
+
+  DeleteRegKey HKCR "Software\Classes\courrielleur\shell\open\command"
+  DeleteRegKey HKCR "Software\Classes\courrielleur\shell\open"
+  DeleteRegKey HKCR "Software\Classes\courrielleur\shell"
+  DeleteRegKey HKCR "Software\Classes\courrielleur"
+
+  ; Creation des dossiers dans le registre
+  WriteRegStr HKCR "Software\Classes\courrielleur" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open\command" "" ""
+
+  ; Ajout des valeurs de registre SSO
+  WriteRegStr HKCR "Software\Classes\courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "URL Protocol" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 
   ${StartUninstallLog}
 
@@ -664,14 +692,28 @@ SectionEnd
 ; Cleanup operations to perform at the end of the installation.
 Section "-InstallEndCleanup"
 
-  ; 7689
+  ; 7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
+  ; Suppression des dossiers dans le registre
   SetRegView 64
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses12"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses12"
-  WriteRegStr HKCU "Software\Classes\courrielleur" "hkcutest" "hkcutestclasses12"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword12"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword12"
-  WriteRegDWORD HKEY_CURRENT_USER "Software\Classes\courrielleur" "hkcutest" "hkcutestclassesdword12"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses3"
+
+  DeleteRegKey HKCR "Software\Classes\courrielleur\shell\open\command"
+  DeleteRegKey HKCR "Software\Classes\courrielleur\shell\open"
+  DeleteRegKey HKCR "Software\Classes\courrielleur\shell"
+  DeleteRegKey HKCR "Software\Classes\courrielleur"
+
+  ; Creation des dossiers dans le registre
+  WriteRegStr HKCR "Software\Classes\courrielleur" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open\command" "" ""
+
+  ; Ajout des valeurs de registre SSO
+  WriteRegStr HKCR "Software\Classes\courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "URL Protocol" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open" "" ""
+  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
 
   SetDetailsPrint both
   DetailPrint "$(STATUS_CLEANUP)"
@@ -1049,15 +1091,6 @@ Function preComponents
   ClearErrors
   WriteRegStr HKLM "Software\Mozilla" \
               "${BrandShortName}InstallerTest" "Write Test"
-
-  ; 7689
-  SetRegView 64
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses22"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses22"
-  WriteRegStr HKCU "Software\Classes\courrielleur" "hkcutest" "hkcutestclasses22"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword22"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword22"
-  WriteRegDWORD HKEY_CURRENT_USER "Software\Classes\courrielleur" "hkcutest" "hkcutestclassesdword22"
 
   ${If} ${Errors}
     ClearErrors

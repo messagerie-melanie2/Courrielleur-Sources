@@ -198,15 +198,6 @@ SectionEnd
 
 Section "-Application" APP_IDX
 
-  ; 7689
-  SetRegView 64
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses15"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses15"
-  WriteRegStr HKCU "Software\Classes\courrielleur" "hkcutest" "hkcutestclasses15"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword15"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword15"
-  WriteRegDWORD HKEY_CURRENT_USER "Software\Classes\courrielleur" "hkcutest" "hkcutestclassesdword15"
-
   ${StartUninstallLog}
 
   SetDetailsPrint both

@@ -40,17 +40,6 @@
   ClearErrors
   WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
 
-  ; #7689
-  ${If} ${RunningX64}
-      SetRegView 64
-  ${EndIf}
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses1"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses1"
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses1"
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses1"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword1"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword1"
-
   ${If} ${Errors}
     StrCpy $TmpVal "HKCU"
   ${Else}
@@ -219,17 +208,6 @@
     WriteRegDWORD HKCU "$R1" "IconsVisible" 0
   ${EndIf}
 
-  ; #7689
-  ${If} ${RunningX64}
-      SetRegView 64
-  ${EndIf}
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses2"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses2"
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses2"
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses2"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword2"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword2"
-
 
   SetShellVarContext all  ; Set $DESKTOP to All Users
   ${Unless} ${FileExists} "$DESKTOP\${BrandShortName}.lnk"
@@ -297,17 +275,6 @@
   ${If} ${AtLeastWin8}
     WriteRegDWORD HKCU "$R1" "IconsVisible" 1
   ${EndIf}
-
-  ; #7689
-  ${If} ${RunningX64}
-      SetRegView 64
-  ${EndIf}
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses3"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses3"
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses3"
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses3"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword3"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword3"
 
   SetShellVarContext all  ; Set $DESKTOP to All Users
   ${Unless} ${FileExists} "$DESKTOP\${BrandShortName}.lnk"
@@ -548,35 +515,6 @@
   WriteRegStr ${RegKey} "$0\InstallInfo" "ShowIconsCommand" "$\"$7$\" /ShowShortcuts"
   WriteRegStr ${RegKey} "$0\InstallInfo" "ReinstallCommand" "$\"$7$\" /SetAsDefaultAppGlobal"
 
-  ; #7689
-  ${If} ${RunningX64}
-      SetRegView 64
-  ${EndIf}
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses4"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses4"
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses4"
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses4"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword4"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword4"
-
-  ; #7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
-  ; Suppression des dossiers dans le registre
-  DeleteRegKey ${RegKey} "Software\Classes\courrielleur\shell\open\command"
-  DeleteRegKey ${RegKey} "Software\Classes\courrielleur\shell\open"
-  DeleteRegKey ${RegKey} "Software\Classes\courrielleur\shell"
-  DeleteRegKey ${RegKey} "Software\Classes\courrielleur"
-
-  ; Creation des dossiers dans le registre
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "" ""
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur\shell" "" ""
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur\shell\open" "" ""
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur\shell\open\command" "" ""
-
-  ; Ajout des valeurs de registre SSO
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "" "Courrielleur Mél"
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "URL Protocol" ""
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
-
   WriteRegDWORD ${RegKey} "$0\InstallInfo" "IconsVisible" 1
 
   WriteRegStr ${RegKey} "$0\shell\open\command" "" "$\"$8$\""
@@ -640,17 +578,6 @@
       DeleteRegValue HKCU "Software\Mozilla\${AppName}\32to64DidMigrate" "$1"
     ${EndIf}
   ${EndIf}
-
-  ; #7689
-  ${If} ${RunningX64}
-      SetRegView 64
-  ${EndIf}
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses5"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses5"
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses5"
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses5"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword5"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword5"
 
   ClearErrors
   ReadRegDWORD $2 HKCU "Software\Mozilla\${AppName}\32to64DidMigrate" "$1"
@@ -1001,16 +928,6 @@
     WriteRegStr HKLM "$R0\1" "name" "${CERTIFICATE_NAME_PREVIOUS}"
     WriteRegStr HKLM "$R0\1" "issuer" "${CERTIFICATE_ISSUER_PREVIOUS}"
 
-    ; #7689
-  ${If} ${RunningX64}
-      SetRegView 64
-  ${EndIf}
-  WriteRegStr HKLM "Software\Classes\courrielleur" "hklmtest" "hklmtestclasses7"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses7"
-  WriteRegStr SHCTX "Software\Classes\courrielleur" "shctxtest" "shctxtestclasses7"
-  WriteRegStr ${RegKey} "Software\Classes\courrielleur" "regkeytest" "regkeytestclasses7"
-  WriteRegDWORD HKEY_LOCAL_MACHINE "Software\Classes\courrielleur" "hklmtest" "hklmtestclassesdword7"
-  WriteRegDWORD HKEY_CLASSES_ROOT "Software\Classes\courrielleur" "hklmtest" "hkcrtestclassesdword7"
 
     ${If} ${RunningX64}
       SetRegView lastused
