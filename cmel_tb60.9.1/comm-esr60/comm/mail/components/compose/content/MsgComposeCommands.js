@@ -3677,6 +3677,7 @@ function DoSpellCheckBeforeSend()
  */
 function GenericSendMessage(msgType)
 {
+  /*
   // mantis 5129
   if (nsIMsgCompDeliverMode.AutoSaveAsDraft==msgType &&
       !Services.io.offline){
@@ -3718,7 +3719,7 @@ function GenericSendMessage(msgType)
         return;
       }
     }
-  }
+  }*/
 
   GenericSendMessageTB(msgType);
 }
