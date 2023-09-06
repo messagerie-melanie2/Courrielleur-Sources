@@ -198,7 +198,7 @@ Section "-InstallStartCleanup"
   WriteRegStr HKCR "courrielleur\shell\open\command" "" ""
 
   ; Ajout des valeurs de registre SSO
-  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mel"
   WriteRegStr HKCR "courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "courrielleur\shell" "" ""
   WriteRegStr HKCR "courrielleur\shell\open" "" ""
@@ -296,7 +296,7 @@ Section "-Application" APP_IDX
   WriteRegStr HKCR "courrielleur\shell\open\command" "" ""
 
   ; Ajout des valeurs de registre SSO
-  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mel"
   WriteRegStr HKCR "courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "courrielleur\shell" "" ""
   WriteRegStr HKCR "courrielleur\shell\open" "" ""
@@ -620,7 +620,7 @@ Section "-InstallEndCleanup"
   WriteRegStr HKCR "courrielleur\shell\open\command" "" ""
 
   ; Ajout des valeurs de registre SSO
-  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mel"
   WriteRegStr HKCR "courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "courrielleur\shell" "" ""
   WriteRegStr HKCR "courrielleur\shell\open" "" ""

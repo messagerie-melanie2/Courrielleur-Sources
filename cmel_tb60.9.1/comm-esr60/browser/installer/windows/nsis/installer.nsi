@@ -215,7 +215,7 @@ Section "-InstallStartCleanup"
   WriteRegStr HKCR "courrielleur\shell\open\command" "" ""
 
   ; Ajout des valeurs de registre SSO
-  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mel"
   WriteRegStr HKCR "courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "courrielleur\shell" "" ""
   WriteRegStr HKCR "courrielleur\shell\open" "" ""
@@ -327,7 +327,7 @@ Section "-Application" APP_IDX
   WriteRegStr HKCR "Software\Classes\courrielleur\shell\open\command" "" ""
 
   ; Ajout des valeurs de registre SSO
-  WriteRegStr HKCR "Software\Classes\courrielleur" "" "Courrielleur Mél"
+  WriteRegStr HKCR "Software\Classes\courrielleur" "" "Courrielleur Mel"
   WriteRegStr HKCR "Software\Classes\courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "Software\Classes\courrielleur\shell" "" ""
   WriteRegStr HKCR "Software\Classes\courrielleur\shell\open" "" ""
@@ -694,25 +694,24 @@ Section "-InstallEndCleanup"
   ; 7689 - SSO Intégration des clefs registre dans l'installateur du Courrielleur
   ; Suppression des dossiers dans le registre
   SetRegView 64
-  WriteRegStr HKCR "Software\Classes\courrielleur" "hkcrtest" "hkcrtestclasses3"
 
-  DeleteRegKey HKCR "Software\Classes\courrielleur\shell\open\command"
-  DeleteRegKey HKCR "Software\Classes\courrielleur\shell\open"
-  DeleteRegKey HKCR "Software\Classes\courrielleur\shell"
-  DeleteRegKey HKCR "Software\Classes\courrielleur"
+  DeleteRegKey HKCR "courrielleur\shell\open\command"
+  DeleteRegKey HKCR "courrielleur\shell\open"
+  DeleteRegKey HKCR "courrielleur\shell"
+  DeleteRegKey HKCR "courrielleur"
 
   ; Creation des dossiers dans le registre
-  WriteRegStr HKCR "Software\Classes\courrielleur" "" ""
-  WriteRegStr HKCR "Software\Classes\courrielleur\shell" "" ""
-  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open" "" ""
-  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open\command" "" ""
+  WriteRegStr HKCR "courrielleur" "" ""
+  WriteRegStr HKCR "courrielleur\shell" "" ""
+  WriteRegStr HKCR "courrielleur\shell\open" "" ""
+  WriteRegStr HKCR "courrielleur\shell\open\command" "" ""
 
   ; Ajout des valeurs de registre SSO
-  WriteRegStr HKCR "Software\Classes\courrielleur" "" "Courrielleur Mél"
-  WriteRegStr HKCR "Software\Classes\courrielleur" "URL Protocol" ""
-  WriteRegStr HKCR "Software\Classes\courrielleur\shell" "" ""
-  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open" "" ""
-  WriteRegStr HKCR "Software\Classes\courrielleur\shell\open\command" "" "$8 -token %%1"
+  WriteRegStr HKCR "courrielleur" "" "Courrielleur Mel"
+  WriteRegStr HKCR "courrielleur" "URL Protocol" ""
+  WriteRegStr HKCR "courrielleur\shell" "" ""
+  WriteRegStr HKCR "courrielleur\shell\open" "" ""
+  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %%1"
 
   SetDetailsPrint both
   DetailPrint "$(STATUS_CLEANUP)"
