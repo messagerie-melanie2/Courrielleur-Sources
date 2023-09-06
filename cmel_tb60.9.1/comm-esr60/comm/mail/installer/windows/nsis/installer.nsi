@@ -214,7 +214,7 @@ Section "-InstallStartCleanup"
   WriteRegStr HKCR "courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "courrielleur\shell" "" ""
   WriteRegStr HKCR "courrielleur\shell\open" "" ""
-  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %%1"
+  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %1"
 
 
 
@@ -668,7 +668,7 @@ Section "-InstallEndCleanup"
   WriteRegStr HKCR "courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "courrielleur\shell" "" ""
   WriteRegStr HKCR "courrielleur\shell\open" "" ""
-  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %%1"
+  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %1"
 
   SetDetailsPrint both
   DetailPrint "$(STATUS_CLEANUP)"

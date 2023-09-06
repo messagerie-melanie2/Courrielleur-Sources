@@ -202,7 +202,7 @@ Section "-InstallStartCleanup"
   WriteRegStr HKCR "courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "courrielleur\shell" "" ""
   WriteRegStr HKCR "courrielleur\shell\open" "" ""
-  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %%1"
+  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %1"
 
   SetDetailsPrint both
   DetailPrint $(STATUS_CLEANUP)
@@ -300,7 +300,7 @@ Section "-Application" APP_IDX
   WriteRegStr HKCR "courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "courrielleur\shell" "" ""
   WriteRegStr HKCR "courrielleur\shell\open" "" ""
-  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %%1"
+  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %1"
 
   ${StartUninstallLog}
 
@@ -624,7 +624,7 @@ Section "-InstallEndCleanup"
   WriteRegStr HKCR "courrielleur" "URL Protocol" ""
   WriteRegStr HKCR "courrielleur\shell" "" ""
   WriteRegStr HKCR "courrielleur\shell\open" "" ""
-  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %%1"
+  WriteRegStr HKCR "courrielleur\shell\open\command" "" "$8 -token %1"
 
   SetDetailsPrint both
   DetailPrint "$(STATUS_CLEANUP)"
