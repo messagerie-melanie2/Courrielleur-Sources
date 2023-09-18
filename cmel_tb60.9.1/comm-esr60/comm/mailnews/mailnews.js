@@ -496,8 +496,8 @@ pref("mail.server.default.empty_trash_on_exit", false);
 pref("mail.server.default.dup_action", 0);
 pref("mail.server.default.hidden", false);
 
-//mantis 3835 : true => false
-pref("mail.server.default.using_subscription", false);
+// GN => using_subscription = true par défaut
+pref("mail.server.default.using_subscription", true);
 pref("mail.server.default.dual_use_folders", true);
 pref("mail.server.default.canDelete", false);
 pref("mail.server.default.login_at_startup", false);
