@@ -273,30 +273,28 @@
                                oncommand="MsgReplySender(event);RestoreFocusAfterHdrButton();"
                                observes="button_reply"
                                class="toolbarbutton-1 msgHeaderView-button hdrReplyButton"/>
-                <!-- Bug mantis 0001924: Ne pas mettre en avant le bouton repondre a tous -->
                 <toolbarbutton id="hdrReplyAllButton"
-                               label="&hdrReplyButton1.label;"
-                               tooltiptext="&hdrReplyButton2.tooltip;"
-                               oncommand="MsgReplySender(event); RestoreFocusAfterHdrButton();"
+                               label="&hdrReplyAllButton1.label;"
+                               tooltiptext="&hdrReplyAllButton1.tooltip;"
+                               oncommand="MsgReplyToAllMessage(event);RestoreFocusAfterHdrButton();"
                                observes="button_replyall"
-                               class="toolbarbutton-1 msgHeaderView-button hdrReplyButton"
+                               class="toolbarbutton-1 msgHeaderView-button hdrReplyButton hdrReplyAllButton"
                                type="menu-button"
                                hidden="true">
-                  <menupopup id="hdrReplyAllDropdown">                   
-                    <menuitem id="hdrReplySubButton"
-                              label="&hdrReplyButton1.label;"
-                              tooltiptext="&hdrReplyButton2.tooltip;"
-                              observes="button_reply"/>
-                    <menuseparator id="hdrReplyAllSubSeparator"/>
+                  <menupopup id="hdrReplyAllDropdown">
                     <menuitem id="hdrReplyAll_ReplyAllSubButton"
                               label="&hdrReplyAllButton1.label;"
                               tooltiptext="&hdrReplyAllButton1.tooltip;"
-                              oncommand="MsgReplyToAllMessage(event); event.stopPropagation();
-                                          RestoreFocusAfterHdrButton();"
                               observes="button_replyall"/>
+                    <menuseparator id="hdrReplyAllSubSeparator"/>
+                    <menuitem id="hdrReplySubButton"
+                              label="&hdrReplyButton1.label;"
+                              tooltiptext="&hdrReplyButton2.tooltip;"
+                              observes="button_reply"
+                              oncommand="MsgReplySender(event); event.stopPropagation();
+                                         RestoreFocusAfterHdrButton();"/>
                   </menupopup>
                 </toolbarbutton>
-                <!-- fin Bug mantis 0001924 -->
                 <toolbarbutton id="hdrReplyListButton"
                                label="&hdrReplyListButton1.label;"
                                tooltiptext="&hdrReplyListButton1.tooltip;"

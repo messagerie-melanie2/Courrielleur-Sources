@@ -1364,9 +1364,7 @@ function UpdateReplyButtons()
     if (gFolderDisplay.selectedMessageIsFeed)
       replyToSenderButton.hidden = true;
     else if (smartReplyButton)
-      //Bug mantis 0001924: Ne pas mettre en avant le bouton repondre a tous
-      //replyToSenderButton.hidden = (buttonToShow == "reply");
-      replyToSenderButton.hidden = (buttonToShow == "reply" || "replyAll" == buttonToShow);
+      replyToSenderButton.hidden = (buttonToShow == "reply");
     else
       replyToSenderButton.hidden = false;
   }
