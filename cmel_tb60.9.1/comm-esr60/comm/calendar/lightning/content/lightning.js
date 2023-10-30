@@ -36,7 +36,7 @@ pref("calendar.agendaListbox.soondays", 5);
 
 // alarm settings
 pref("calendar.alarms.show", true);
-pref("calendar.alarms.showmissed", true);
+pref("calendar.alarms.showmissed", false);
 pref("calendar.alarms.playsound", true);
 pref("calendar.alarms.soundURL", "chrome://calendar/content/sound.wav");
 pref("calendar.alarms.defaultsnoozelength", 5);
