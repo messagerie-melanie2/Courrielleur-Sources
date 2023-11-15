@@ -1866,12 +1866,12 @@ new file mode 100644
 --- /dev/null
 +++ b/comm-esr60/comm/courrielleurm2/branding/LICENSE
 @@ -0,0 +1,10 @@
-+These files are under the MPL 2, as below. However, please note that you 
++These files are under the MPL 2, as below. However, please note that you
 +are not granted any trademark rights or licenses to the trademarks of the
 +Mozilla Foundation or any party, including without limitation the
 +Firefox name or logo.
 +
-+For more information, see: http://www.mozilla.org/foundation/licensing.html 
++For more information, see: http://www.mozilla.org/foundation/licensing.html
 +
 +This Source Code Form is subject to the terms of the Mozilla Public
 +License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -2638,9 +2638,9 @@ new file mode 100644
 +!define BrandFullNameInternal "Courrielleur Melanie2"
 +!define BrandFullName         "Courrielleur Mélanie2"
 +!define CompanyName           "PNE Annuaire et Messagerie"
-+!define URLInfoAbout          "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
-+!define URLUpdateInfo         "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
-+!define SurveyURL             "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
++!define URLInfoAbout          "https://mel.din.developpement-durable.gouv.fr/aide/"
++!define URLUpdateInfo         "https://mel.din.developpement-durable.gouv.fr/aide/"
++!define SurveyURL             "https://mel.din.developpement-durable.gouv.fr/aide/"
 +!define URLSystemRequirements "https://www.thunderbird.net/thunderbird/system-requirements/"
 +
 diff --git a/comm-esr60/comm/courrielleurm2/branding/configure.sh b/comm-esr60/comm/courrielleurm2/branding/configure.sh
@@ -36887,12 +36887,12 @@ diff --git a/comm-esr60/comm/mail/app/Makefile.in b/comm-esr60/comm/mail/app/Mak
 +++ b/comm-esr60/comm/mail/app/Makefile.in
 @@ -8,7 +8,7 @@
  MOZ_BUILDID = $(shell $(PYTHON) $(moztopsrcdir)/config/printconfigsetting.py $(DIST)/bin/platform.ini Build BuildID)
- 
+
  DEFINES += \
 -  -DTHUNDERBIRD_ICO='"$(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/messengerWindow.ico"' \
 +  -DTHUNDERBIRD_ICO='"$(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/courrielleur.ico"' \
     $(NULL)
- 
+
  # Build a binary bootstrapping with XRE_main
 diff --git a/comm-esr60/comm/mail/confvars.sh b/comm-esr60/comm/mail/confvars.sh
 --- a/comm-esr60/comm/mail/confvars.sh
@@ -36900,9 +36900,9 @@ diff --git a/comm-esr60/comm/mail/confvars.sh b/comm-esr60/comm/mail/confvars.sh
 @@ -27,7 +27,7 @@
  MOZ_APP_VERSION_DISPLAY=`cat $MOZ_APP_VERSION_DISPLAY_TXT`
  THUNDERBIRD_VERSION=$MOZ_APP_VERSION
- 
+
 -MOZ_BRANDING_DIRECTORY=$commreltopsrcdir/mail/branding/nightly
 +MOZ_BRANDING_DIRECTORY=$commreltopsrcdir/courrielleurm2/branding
  MOZ_OFFICIAL_BRANDING_DIRECTORY=$commreltopsrcdir/mail/branding/thunderbird
- 
+
  MOZ_APP_ID={3550f703-e582-4d05-9a08-453d09bdfdc6}

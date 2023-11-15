@@ -11,10 +11,10 @@ diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/co
 +++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
 @@ -118,7 +118,7 @@
       "https://www.mozilla.org/thunderbird/legal/privacy/#crash-reporter");
- 
+
  // Base URL for web-based support pages.
 -pref("app.support.baseURL", "https://support.thunderbird.net/%LOCALE%/%APP%/%APPBUILDID%/");
-+pref("app.support.baseURL", "https://melanie2web.din.developpement-durable.gouv.fr/aide");
- 
++pref("app.support.baseURL", "https://mel.din.developpement-durable.gouv.fr/aide");
+
  // Show error messages in error console.
  pref("javascript.options.showInConsole", true);

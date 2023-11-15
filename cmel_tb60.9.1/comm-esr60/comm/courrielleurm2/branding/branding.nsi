@@ -42,8 +42,8 @@
 !define BrandFullNameInternal "Courrielleur Mel"
 !define BrandFullName         "Courrielleur Mél"
 !define CompanyName           "SG/DNUM/UNI/DETN"
-!define URLInfoAbout          "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
-!define URLUpdateInfo         "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
-!define SurveyURL             "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
+!define URLInfoAbout          "https://mel.din.developpement-durable.gouv.fr/aide/"
+!define URLUpdateInfo         "https://mel.din.developpement-durable.gouv.fr/aide/"
+!define SurveyURL             "https://mel.din.developpement-durable.gouv.fr/aide/"
 !define URLSystemRequirements "https://www.thunderbird.net/thunderbird/system-requirements/"
 

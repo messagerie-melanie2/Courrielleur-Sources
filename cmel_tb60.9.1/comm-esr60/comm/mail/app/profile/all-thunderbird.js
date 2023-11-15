@@ -119,7 +119,7 @@ pref("toolkit.crashreporter.infoURL",
      "https://www.mozilla.org/thunderbird/legal/privacy/#crash-reporter");
 
 // Base URL for web-based support pages.
-pref("app.support.baseURL", "https://melanie2web.din.developpement-durable.gouv.fr/aide");
+pref("app.support.baseURL", "https://mel.din.developpement-durable.gouv.fr/aide");
 
 //Option imprimer le fond de page (couleurs et images)
 pref("print.print_bgcolor", true);

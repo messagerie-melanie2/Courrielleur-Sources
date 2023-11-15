@@ -10,7 +10,7 @@ diff --git a/comm-esr60/comm/courrielleurm2/branding/branding.nsi b/comm-esr60/c
 --- a/comm-esr60/comm/courrielleurm2/branding/branding.nsi
 +++ b/comm-esr60/comm/courrielleurm2/branding/branding.nsi
 @@ -39,8 +39,8 @@
- 
+
  # BrandFullNameInternal is used for some registry and file system values
  # instead of BrandFullName and typically should not be modified.
 -!define BrandFullNameInternal "Courrielleur Melanie2"
@@ -18,8 +18,8 @@ diff --git a/comm-esr60/comm/courrielleurm2/branding/branding.nsi b/comm-esr60/c
 +!define BrandFullNameInternal "Courrielleur Mel"
 +!define BrandFullName         "Courrielleur Mél"
  !define CompanyName           "PNE Annuaire et Messagerie"
- !define URLInfoAbout          "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
- !define URLUpdateInfo         "https://melanie2web.din.developpement-durable.gouv.fr/aide/"
+ !define URLInfoAbout          "https://mel.din.developpement-durable.gouv.fr/aide/"
+ !define URLUpdateInfo         "https://mel.din.developpement-durable.gouv.fr/aide/"
 diff --git a/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.dtd b/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.dtd
 --- a/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.dtd
 +++ b/comm-esr60/comm/courrielleurm2/branding/locales/fr/brand.dtd
@@ -58,17 +58,17 @@ diff --git a/comm-esr60/comm/mail/installer/windows/nsis/defines.nsi.in b/comm-e
 @@ -17,12 +17,12 @@
  !define AppRegNameMail        "Courrielleur"
  !define AppRegNameNews        "Courrielleur (News)"
- 
+
 -!define ClientsRegName        "Courrielleur Melanie2"
 +!define ClientsRegName        "Courrielleur Mel"
- 
+
  !define BrandShortName        "Courrielleur"
  !define PreReleaseSuffix      ""
  !ifndef BrandFullName
 -!define BrandFullName         "Courrielleur Mélanie2"
 +!define BrandFullName         "Courrielleur Mél"
  !endif
- 
+
  !define CERTIFICATE_NAME            "Mozilla Corporation"
 diff --git a/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi b/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
 --- a/comm-esr60/comm/mail/installer/windows/nsis/uninstaller.nsi
@@ -88,13 +88,13 @@ diff --git a/comm-esr60/toolkit/mozapps/installer/package-name.mk b/comm-esr60/t
 @@ -41,10 +41,10 @@
  MOZ_PKG_PLATFORM := $(MOZ_PKG_PLATFORM)-$(MOZ_PKG_SPECIAL)
  endif
- 
+
 -MOZ_PKG_DIR ?= CourrielleurMelanie2
 +MOZ_PKG_DIR ?= CourrielleurMel
- 
+
  ifndef MOZ_PKG_APPNAME
 -MOZ_PKG_APPNAME = CourrielleurMelanie2
 +MOZ_PKG_APPNAME = CourrielleurMel
  endif
- 
+
  ifdef MOZ_SIMPLE_PACKAGE_NAME

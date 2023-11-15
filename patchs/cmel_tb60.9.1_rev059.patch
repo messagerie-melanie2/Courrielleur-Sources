@@ -11,12 +11,12 @@ diff --git a/comm-esr60/comm/mail/app/profile/all-thunderbird.js b/comm-esr60/co
 +++ b/comm-esr60/comm/mail/app/profile/all-thunderbird.js
 @@ -121,6 +121,10 @@
  // Base URL for web-based support pages.
- pref("app.support.baseURL", "https://melanie2web.din.developpement-durable.gouv.fr/aide");
- 
+ pref("app.support.baseURL", "https://mel.din.developpement-durable.gouv.fr/aide");
+
 +//Option imprimer le fond de page (couleurs et images)
 +pref("print.print_bgcolor", true);
 +pref("print.print_bgimages", true);
 +
  // Show error messages in error console.
  pref("javascript.options.showInConsole", true);
- 
+
