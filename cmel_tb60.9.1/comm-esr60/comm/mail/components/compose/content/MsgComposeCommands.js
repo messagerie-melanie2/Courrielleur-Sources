@@ -648,7 +648,7 @@ var progressListener = {
 // #6282: implémentation du droit à la déconnexion
 var alreadyAnswered = false;
 function DeconnexionRights()
-{  
+{
   let now = new Date(Date.now());
   // Appelé au premier focus de la fenêtre d'écriture de mail
   if(!alreadyAnswered && (!IsOpenDay(now) || !IsOpenHour(now)))// && DeconnexionRightsUser())
@@ -672,12 +672,15 @@ function DeconnexionRights()
 
 function AskOpenHours()
 {
-  window.openDialog("chrome://courrielleur/content/openhours.xul",
+  if(!OpenHoursAreIgnored())
+  {
+    window.openDialog("chrome://courrielleur/content/openhours.xul",
                       "",
                       "chrome,center,titlebar,modal,width=460,height=370",
                       {composeWindow:top.window,
                        msgCompFields:gMsgCompose.compFields},window.self);
-                       
+  }
+
   switch (window.status)
   {
     case "openhours_continue":
@@ -695,8 +698,46 @@ function AskOpenHours()
   }
 }
 
+// #8159: Ne plus redemander droit à la déconnexion après Continuer
+function OpenHoursAreIgnored()
+{
+  try{
+    // On récupère la date du dernier bouton Continuer
+    var storedTimestampString = Services.prefs.getCharPref("mail.identity.last_openhours_continue");
+    var storedTimestamp = parseInt(storedTimestampString, 10);
+
+    // On récupère la date actuelle
+    var currentTimestamp = Date.now();
+
+    // On calcul la différence avec last_openhours_continue
+    var timeDifference = currentTimestamp - storedTimestamp;
+    console.log("in OpenHoursAreIgnored - currentTimestamp: "+currentTimestamp);
+
+    console.log("in OpenHoursAreIgnored - storedTimestamp: "+storedTimestamp);
+    // On calcul la différence en heure
+    var hoursDifference = timeDifference / (1000 * 60 * 60);
+    console.log("in OpenHoursAreIgnored - hoursDifference: "+hoursDifference);
+    // On vérifie que le bouton Continuer n'a pas été préssé il y a moins de 10 heures
+    if (hoursDifference < 10) {
+        return true;
+    } else {
+      return false;
+    }
+  }
+  catch
+  {
+    // En cas d'erreur, mail.identity.last_openhours_continue n'existe certainement simplement pas
+    console.log("in OpenHoursAreIgnored - defaulting to false");
+    return false;
+  }
+}
+
 function OpenHoursContinue()
 {
+  // #8159: Ne plus redemander droit à la déconnexion après Continuer
+  // last_openhours_continue permet de sauvegarder le dernier "Continuer"
+  Services.prefs.setCharPref("mail.identity.last_openhours_continue", Date.now().toString());
+
   window.arguments[1].status = "openhours_continue";
   window.close();
 }
@@ -726,14 +767,14 @@ function IsOpenDay(date)
     let openHoursPrefValue = Services.prefs.getCharPref("mail.identity.openhours");
     if(openHoursPrefValue  === "none")
       return true;
-    
+
     let openHoursHoursArray = openHoursPrefValue.split("-");
     let openHoursDaysArray = openHoursHoursArray[2].split("/");
-    
+
     // Si le jour est actuel est ouvré
     if(openHoursDaysArray.includes(GetDateDayName(date)))
       return true;
-    
+
     // Sinon
     return false;
   }
@@ -752,15 +793,15 @@ function IsOpenHour(date)
 
     if(openHoursPrefValue === "none")
       return true;
-    
+
     let openHoursHoursArray = openHoursPrefValue.split("-");
     //let openHoursDaysArray = openHoursHoursArray[2].split("/");
-    
+
     let hBegin = openHoursHoursArray[0].split(":")[0];
     let hEnd = openHoursHoursArray[1].split(":")[0];
     let mBegin = openHoursHoursArray[0].split(":")[1];
     let mEnd = openHoursHoursArray[1].split(":")[1];
-    
+
     // Si on est avant l'heure de départ, ou après l'heure de fin
     if(date.getHours() < hBegin || date.getHours() > hEnd)
       return false;
@@ -773,7 +814,7 @@ function IsOpenHour(date)
       if(date.getHours() == hEnd && date.getMinutes() > mEnd)
         return false;
     }
-    
+
     return true;
   }
   catch(ex)
@@ -870,7 +911,7 @@ function cmdSendDifButton()
                     "chrome,center,titlebar,modal,width=400,height=400",
                     {composeWindow:top.window,
                      msgCompFields:gMsgCompose.compFields},window.self,sendDifDate);
-                     
+
   switch (parseInt(window.status))
   {
     case 0:
@@ -884,20 +925,20 @@ function cmdSendDifButton()
       // Différer
       SetSendDifDateAndDisplay(new Date(window.status*1000));
       break;
-  }  
+  }
 }
 
 function SendDifLoad(date)
 {
   window.arguments[1].status = 0;
-  
+
   // Si on a une date de remise différée
   if(date != null && !isNaN(date))
   {
     // On affiche le bon texte
     document.getElementById("senddif-active").style.display = "block";
     document.getElementById("senddif-inactive").style.display = "none";
-    
+
     // On charge la valeur de la date dans le label concerné
     document.getElementById("senddif-label").value = GetDisplayDate(date);
 
@@ -906,7 +947,7 @@ function SendDifLoad(date)
     let hours = date.getHours() < 10 ? '0'+date.getHours() : date.getHours();
     setElementValue("senddif-date", date);
     document.getElementById("senddif-hour").value = hours+":"+minutes;
-    
+
     let remember_checkbox = document.getElementById("senddif-remember");
     if(Services.prefs.getIntPref("mail.identity.timestamp_envoi_differe") != 0)
       remember_checkbox.checked=true;
@@ -926,7 +967,7 @@ function SendDifLoad(date)
 
 // #6282: Factorisation pour implémentation du droit à la déconnexion
 function SetSendDifDateAndDisplay(pDate)
-{  
+{
   sendDifDate = pDate;
   let btnSendDif = document.getElementById("button-send-dif");
   if(sendDifDate != null && !isNaN(sendDifDate))
@@ -948,12 +989,12 @@ function SendDifEnable()
   var date = document.getElementById("senddif-date").value;
   var hour = document.getElementById("senddif-hour").value;
   date.setHours(hour.split(":")[0], hour.split(":")[1]);
-  
+
   var maxdate = new Date(Date.now());
   maxdate.setDate(maxdate.getDate() + 30);
-  
+
   // La date est invalide pour un envois différé
-  if(date > maxdate)    
+  if(date > maxdate)
     alert("La remise différée de votre mail ne peut excéder le " + GetDisplayDate(maxdate) + ".");
   else if(date < Date.now())
     alert("La date/heure spécifiée est antérieure à la date actuelle.");
@@ -962,12 +1003,12 @@ function SendDifEnable()
     let remember_checkbox = document.getElementById("senddif-remember");
     let isoDate = GetIsoDate(date);
     let timeStamp = Math.floor((new Date(isoDate))/1000);
-    
+
     if(remember_checkbox.checked)
       Services.prefs.setIntPref("mail.identity.timestamp_envoi_differe", timeStamp);
     else
       Services.prefs.setIntPref("mail.identity.timestamp_envoi_differe", 0);
-    
+
     window.arguments[1].status = timeStamp;
     window.close();
   }
@@ -994,20 +1035,20 @@ function GetIsoDate(date)
   let year = date.getFullYear();
   let minutes = date.getMinutes() < 10 ? '0'+date.getMinutes() : date.getMinutes();
   let hours = date.getHours() < 10 ? '0'+date.getHours() : date.getHours();
-  
+
   let newDate = year+"-" +month+"-"+day+" "+hours+":"+minutes+":"+date.getSeconds();
   return newDate;
 }
 
 function GetDisplayDate(date)
-{ 
+{
   let monthtmp = date.getMonth()+1;
   let day = date.getDate() < 10 ? '0'+date.getDate() : date.getDate();
   let month = monthtmp < 10 ? '0'+monthtmp : monthtmp;
   let year = date.getFullYear();
   let minutes = date.getMinutes() < 10 ? '0'+date.getMinutes() : date.getMinutes();
   let hours = date.getHours() < 10 ? '0'+date.getHours() : date.getHours();
-  
+
   let newDate = day+"/"+month+"/"+year+" "+hours+":"+minutes;
   return newDate;
 }
@@ -3244,12 +3285,12 @@ function ComposeStartup(aParams)
       }
     }
   }
-  
+
   // Ticket mantis 0005306: Emetteur d'un message dans le courrielleur basé sur Thunderbird 60
   if (params) {
-    
+
     let origMsgHdr=params.origMsgHdr;
-    
+
     if (origMsgHdr && origMsgHdr.folder){
 
       let ident=GetDefaultIdentityForMsgHdr(origMsgHdr);
@@ -3269,8 +3310,8 @@ function ComposeStartup(aParams)
   // that created the draft or the identity owning the draft folder for a "foreign",
   // draft, see ComposeMessage() in mailCommands.js. We don't want the latter,
   // so use the creator identity which could be null.
-  
-  // //5963 
+
+  // //5963
   /*if (gComposeType == nsIMsgCompType.Draft) {
     let creatorKey = params.composeFields.creatorIdentityKey;
     params.identity = creatorKey ? getIdentityForKey(creatorKey) : null;
@@ -3285,7 +3326,7 @@ function ComposeStartup(aParams)
     let identities = MailServices.accounts.allIdentities;
     let suitableCount = 0;
 
-    // Search for a matching identity. //5963 
+    // Search for a matching identity. //5963
     /*if (from) {
       for (let ident of fixIterator(identities, Ci.nsIMsgIdentity)) {
         if (ident.email && from == ident.email.toLowerCase()) {
@@ -3313,15 +3354,15 @@ function ComposeStartup(aParams)
     }
 
     // Warn if no or more than one match was found.
-    // But don't warn for +suffix additions (a+b@c.com). //5963 
+    // But don't warn for +suffix additions (a+b@c.com). //5963
     /*if (from && (suitableCount > 1 || (suitableCount == 0 && !emailSimilar(from, params.identity.email))))
       gComposeNotificationBar.setIdentityWarning(params.identity.identityName);*/
   }
-  
+
   // #5306 on ajoute le if pour éviter de vérifier l'identity si elle est null
   if(params.identity)
     identityList.selectedItem = identityList.getElementsByAttribute("identitykey", params.identity.key)[0];
-    
+
   /* remplace par ticket 5306
   // mantis 2749 Emetteur par défaut d'un message émis depuis le dossier modèle
   // mantis 0004983: Expéditeur non modifié lors du déplacement d'1 message dans une autre boîte
@@ -3333,7 +3374,7 @@ function ComposeStartup(aParams)
     if (ident)
       identityList.selectedItem=identityList.getElementsByAttribute("identitykey", ident.key)[0];
   }
-  //fin mantis 2749  (+ else)      
+  //fin mantis 2749  (+ else)
   */
   /* remplace par ticket 5306
   // Here we set the From from the original message, be it a draft or another
@@ -3673,7 +3714,7 @@ function DoSpellCheckBeforeSend()
  * @param msgType nsIMsgCompDeliverMode of the operation.
  */
 function GenericSendMessage(msgType)
-{  
+{
   // mantis 5129
   if (nsIMsgCompDeliverMode.AutoSaveAsDraft==msgType &&
       !Services.io.offline){
@@ -3683,14 +3724,14 @@ function GenericSendMessage(msgType)
       if (nsIMsgCompDeliverMode.AutoSaveAsDraft!=msgType){
         window.setCursor("auto");
       }
-      
+
       if (Services.io.offline) {
         Services.prompt.alert(window, "",
                               getComposeBundle().getString("cm2EnvoiOffline"));
       }
-      
+
       GenericSendMessageTB(msgType);
-      
+
       return;
     }
 
@@ -3698,9 +3739,9 @@ function GenericSendMessage(msgType)
     // dans le cas brouillon ou modele
     let ident=getCurrentIdentity();
     if (ident){
-      
+
       let dossier=ident.draftFolder;
-      
+
       if (dossier.length &&
           0==dossier.indexOf("imap:")){
 
@@ -3709,13 +3750,13 @@ function GenericSendMessage(msgType)
           window.setCursor("wait");
           ToggleWindowLock(true);
         }
-        
+
         cm2TestImapM2(rappel);
 
-        return;     
+        return;
       }
     }
-  } 
+  }
 
   GenericSendMessageTB(msgType);
 }
@@ -3724,7 +3765,7 @@ function GenericSendMessageTB(msgType)
 {
   // #6165: Mise en oeuvre de la Remise différée dans le Courrielleur
   SetMessageCustomHeaders();
-  
+
   var msgCompFields = gMsgCompose.compFields;
 
   Recipients2CompFields(msgCompFields);
@@ -3978,7 +4019,7 @@ function GenericSendMessageTB(msgType)
     //bug mantis 2984 (envoi melanissimo) - fontion de capture des envois
     /*gMsgCompose.SendMsg(msgType, getCurrentIdentity(),
                         getCurrentAccountKey(), msgWindow, progress);*/
-    M2ssimoSendMsg(gMsgCompose, msgType, getCurrentIdentity(), 
+    M2ssimoSendMsg(gMsgCompose, msgType, getCurrentIdentity(),
                     getCurrentAccountKey(), msgWindow, progress);
   }
   catch (ex) {
@@ -4144,18 +4185,18 @@ Date.prototype.toMailString = function() {
 
     const offset = offsetSigne + ("0" + offsetHours).slice(-2) + ("0" + offsetMinutes).slice(-2);
 
-    return days[this.getDay()] + ", " 
-        + this.getDate() + " " 
-        + months[this.getMonth()] + " " 
-        + this.getFullYear() + " " 
-        + ("0" + this.getHours()).slice(-2) + ":" 
-        + ("0" + this.getMinutes()).slice(-2) + ":" 
-        + ("0" + this.getSeconds()).slice(-2) + " " 
+    return days[this.getDay()] + ", "
+        + this.getDate() + " "
+        + months[this.getMonth()] + " "
+        + this.getFullYear() + " "
+        + ("0" + this.getHours()).slice(-2) + ":"
+        + ("0" + this.getMinutes()).slice(-2) + ":"
+        + ("0" + this.getSeconds()).slice(-2) + " "
         + offset;
 };
 
 function SetMessageCustomHeaders()
-{  
+{
   // #6700: Champ date non renseigné depuis une BALP et envoi différé ne focntionne pas - Ajout tolérance d'erreurs
   // #6246: Envoi différé ne fonctionne pas depuis une BALP: séparation en methode et ajout boucle id
   // #6165: Mise en oeuvre de la Remise différée dans le Courrielleur pour chaque identity
@@ -4174,7 +4215,7 @@ function SetMessageCustomHeaders()
         {
           // Conversion de la date différée en format utilisé normalement par C++
           Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.custom_date", "Date: " + sendDifDate.toMailString());
-          
+
           // Stockage timestamp pour envoi différé
           //Services.prefs.setCharPref("mail.identity.timestamp_envoi_differe", Math.floor(sendDifDate/1000));
           Services.prefs.setCharPref("mail.identity.id"+i.toString()+".header.date_envoi_differe", "X-DateEnvoiDiffere: " + Math.floor(sendDifDate/1000));
@@ -4207,7 +4248,7 @@ function SetMessageCustomHeaders()
 }
 
 function SendMessage()
-{  
+{
   let sendInBackground = Services.prefs.getBoolPref("mailnews.sendInBackground");
   if (sendInBackground && (AppConstants.platform != "macosx")) {
     let enumerator = Services.wm.getEnumerator(null);
@@ -4827,10 +4868,10 @@ function FillIdentityList(menulist)
     for (let i = 0; i < identities.length; i++) {
       let identity = identities[i];
       let uid=identity.identityName;
-      try {         
+      try {
         let pref="mail.identity."+identity.key+".identityName";
-        uid=Services.prefs.getCharPref(pref);          
-      } catch(ex) {} 
+        uid=Services.prefs.getCharPref(pref);
+      } catch(ex) {}
       let item = menulist.appendItem(account.incomingServer.prettyName,
                                      identity.fullAddress,
                                      uid);
@@ -7285,7 +7326,7 @@ function AutoSave()
       !gSendOperationInProgress && !gSaveOperationInProgress)
   {
     GenericSendMessage(nsIMsgCompDeliverMode.AutoSaveAsDraft);
-    gAutoSaveKickedIn = true;      
+    gAutoSaveKickedIn = true;
   }
 
   gAutoSaveTimeout = setTimeout(AutoSave, gAutoSaveInterval);
@@ -7861,15 +7902,15 @@ function GetDefaultIdentityForMsgHdr(msghdr) {
 
 // mantis 0004983: Expéditeur non modifié lors du déplacement d'1 message dans une autre boîte
 function cm2IsFolderDraftTemplate(folder){
-  
-  const Ci=Components.interfaces;  
+
+  const Ci=Components.interfaces;
   let dossier=folder;
-  while (!dossier.isServer){   
+  while (!dossier.isServer){
     if (dossier.getFlag(Ci.nsMsgFolderFlags.Drafts|Ci.nsMsgFolderFlags.Templates))
       return true;
     dossier=dossier.parent;
   }
-  
+
   return false;
 }
 
