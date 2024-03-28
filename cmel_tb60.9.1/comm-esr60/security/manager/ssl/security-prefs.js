@@ -45,7 +45,7 @@ pref("security.password_lifetime",       30);
 // (This is only relevant to Windows 8.1)
 pref("security.family_safety.mode", 2);
 
-pref("security.enterprise_roots.enabled", false);
+pref("security.enterprise_roots.enabled", true);
 
 // The supported values of this pref are:
 // 0: do not fetch OCSP
