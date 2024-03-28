@@ -119,7 +119,7 @@ pref("toolkit.crashreporter.infoURL",
      "https://www.mozilla.org/thunderbird/legal/privacy/#crash-reporter");
 
 // Base URL for web-based support pages.
-pref("app.support.baseURL", "http://messagerie.dsic.minint.fr/");
+pref("app.support.baseURL", "https://info.messagerie.interieur.rie.gouv.fr/");
 
 //Option imprimer le fond de page (couleurs et images)
 pref("print.print_bgcolor", true);
