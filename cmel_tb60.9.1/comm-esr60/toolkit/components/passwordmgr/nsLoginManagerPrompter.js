@@ -784,10 +784,10 @@ LoginManagerPrompter.prototype = {
 
         if (Ci.nsIAuthInformation.AUTH_HOST & flags){
                     
-          if ("cm2tags"==aAuthInfo.realm &&
+          if ( ("cm2tags"==aAuthInfo.realm || "pacome"==aAuthInfo.realm) &&
               PacomeAuthUtils.isMelanie2Host(aChannel.URI.host)){
                 
-            this.log("[nsLoginManagerPrompter.js] asyncPromptAuth authentification etiquettes host:"+aChannel.URI.host);
+            this.log("[nsLoginManagerPrompter.js] asyncPromptAuth authentification "+aAuthInfo.realm+" host:"+aChannel.URI.host);
             
             this._removeLoginNotifications();
             cancelable=this._newAsyncPromptConsumer(aCallback, aContext);
