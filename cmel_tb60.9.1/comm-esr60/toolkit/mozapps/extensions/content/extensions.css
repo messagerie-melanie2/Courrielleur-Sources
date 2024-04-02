@@ -212,3 +212,8 @@ richlistitem:not([selected]) * {
 .addon[type="experiment"][status="installing"] .experiment-state {
   display: none;
 }
+
+
+.mce-masquer {
+	visibility:collapse;
+}
