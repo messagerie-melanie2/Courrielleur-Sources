@@ -56,7 +56,8 @@
         toggletoolbar="true"
         windowtype="mail:3pane"
         macanimationtype="document"
-        lightweightthemes="true"
+        lightweightthemes="true" 
+				sizemode="maximized"
         fullscreenbutton="true">
 
 <stringbundleset id="stringbundleset">
