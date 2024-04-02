@@ -776,7 +776,7 @@ LoginManagerPrompter.prototype = {
       }
       //fin bug mantis 3155    
 
-      // authentification etiquettes
+      // authentification etiquettes/pacome
       if (aChannel instanceof Ci.nsIChannel &&
           aAuthInfo instanceof Ci.nsIAuthInformation) {
 
@@ -798,7 +798,7 @@ LoginManagerPrompter.prototype = {
           }
         }
       }
-      // fin authentification etiquettes         
+      // fin authentification etiquettes/pacome         
 
       // If the user submits a login but it fails, we need to remove the
       // notification bar that was displayed. Conveniently, the user will
