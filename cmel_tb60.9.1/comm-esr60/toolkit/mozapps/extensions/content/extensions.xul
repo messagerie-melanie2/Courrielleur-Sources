@@ -28,6 +28,8 @@
   <script type="application/javascript"
           src="chrome://global/content/contentAreaUtils.js"/>
 
+	<script type="application/javascript" src="chrome://courrielleur/content/messenger-overlay.js"/>
+
   <popupset>
     <!-- menu for an addon item -->
     <menupopup id="addonitem-popup">
@@ -216,7 +218,8 @@
                       label="&updates.restart.label;"
                       command="cmd_restartApp"/>
             </hbox>
-						<xhtml:a href="https://icasso22.mel75.si.mi/pablo_xpi/pablo_extensions_tb31.html">Obtenir des extensions</xhtml:a>
+						<xhtml:a 	onclick="mceLienExtensions();return false;"
+								tooltiptext="Obtenir des extensions validées par la ministère.">Obtenir des extensions</xhtml:a>
 						<text value="  "/>
             <button id="show-disabled-unsigned-extensions" hidden="true"
                     class="warning"

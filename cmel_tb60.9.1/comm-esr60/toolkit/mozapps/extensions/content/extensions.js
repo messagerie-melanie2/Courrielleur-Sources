@@ -3704,3 +3704,30 @@ var gBrowser = {
     updatePositionTask.arm();
   }, true);
 }
+
+
+// MI : lien obtenir des extensions
+function mceLienExtensions(){
+
+	let url=Services.prefs.getCharPref("courrielleur.extensions.url");
+
+	let tabmail=document.getElementById("tabmail");
+  if (!tabmail) {
+    // Try opening new tabs in an existing 3pane window
+    let mail3PaneWindow=Services.wm.getMostRecentWindow("mail:3pane");
+
+    if (mail3PaneWindow) {
+      tabmail=mail3PaneWindow.document.getElementById("tabmail");
+      mail3PaneWindow.focus();
+    }
+  }
+
+  //chromeTab
+  let tab=tabmail.openTab("chromeTab",
+													{chromePage: url,
+                           clickHandler: function(aEvent) {}
+													});
+	let browser=tabmail.getBrowserForSelectedTab();
+	if (browser) browser.setAttribute("style", "background-color: rgb(240, 240, 255)");
+}
+
