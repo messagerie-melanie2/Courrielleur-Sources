@@ -8,7 +8,8 @@
 
 this.EXPORTED_SYMBOLS = ["getFolderProperties", "getSpecialFolderString",
                           "getFolderFromUri", "allAccountsSorted",
-                          "getMostRecentFolders", "folderNameCompare"];
+                          "getMostRecentFolders", "folderNameCompare", 
+                          "compareAccounts", "getServerSortOrder"];
 
 ChromeUtils.import("resource:///modules/mailServices.js");
 ChromeUtils.import("resource:///modules/iteratorUtils.jsm");
@@ -150,6 +151,7 @@ function compareAccounts(aAccount1, aAccount2) {
  * @param aExcludeIMAccounts  Remove IM accounts from the list?
  */
 function allAccountsSorted(aExcludeIMAccounts) {
+
   // Get the account list, and add the proper items.
   let accountList = toArray(fixIterator(MailServices.accounts.accounts,
                                         Ci.nsIMsgAccount));
@@ -168,8 +170,6 @@ function allAccountsSorted(aExcludeIMAccounts) {
     });
   }
 
-  //return accountList.sort(compareAccounts);
-  //Bug mantis 0004268: L'extension "Manually sort folders" ne permet pas le tri des dossier locaux comme le permettait "Folderpane Tools"
   return accountList;
 }
 
