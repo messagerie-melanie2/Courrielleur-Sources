@@ -651,7 +651,8 @@ function DeconnexionRights()
 {
   let now = new Date(Date.now());
   // Appelé au premier focus de la fenêtre d'écriture de mail
-  if(!alreadyAnswered && (!IsOpenDay(now) || !IsOpenHour(now)))// && DeconnexionRightsUser())
+  // #8645: pref astreinte pour désactiver le droit à la déconnexion
+  if(!alreadyAnswered && (!IsOpenDay(now) || !IsOpenHour(now) && !Services.prefs.getBoolPref("mail.identity.openhours.astreinte")))// && DeconnexionRightsUser())
   {
     alreadyAnswered = true;
     if(Services.prefs.getIntPref("mail.identity.timestamp_envoi_differe") != 0)
