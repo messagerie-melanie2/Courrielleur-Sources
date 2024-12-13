@@ -253,6 +253,12 @@ var gDisplayPane = {
     if (index >= 0)
     {
       var tagElToEdit = this.mTagListBox.getItemAtIndex(index);
+	  
+	  // #8647: Les etiquettes natives ne devraient pas pouvoir être modifiées
+      let tagdefaut=IsEtiquetteDefaut(tagElToEdit.getAttribute("value"));
+      if(tagdefaut)
+        return;
+	  
       var args = {result: "", keyToEdit: tagElToEdit.getAttribute("value"), okCallback: editTagCallback};
       if (this._loadInContent) {
         let dialog = gSubDialog.open("chrome://messenger/content/newTagDialog.xul",
