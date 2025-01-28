@@ -167,11 +167,22 @@ function contentAreaClick(aEvent)
     if (topWindow){
       aEvent.preventDefault();
       topWindow.webtabs.openWebAppPegase(href);
-      
+      openURL(href);
       return true;
     }
   }
   //fin Bug mantis 0004047
+
+  // ouverture lien pieces jointes evenements (MI ticket 71)
+  let pref_pj=Preferences.get("calendar.attachments.url.melanie2web", "");
+  if (pref_pj!="" && href.indexOf(pref_pj)==0) {
+
+    aEvent.preventDefault();
+
+    openAttachmentHREF(href, aEvent.target.textContent);
+
+    return true;
+  }
 
   // Now we're here, we know this should be loaded in an external browser, so
   // prevent the default action so we don't try and load it here.

@@ -78,6 +78,7 @@ function GetListValue(mailList, doAdd)
   {
 
     fieldValue = inputField.value;
+    fieldValue=fieldValue.replace(/ *<>$/, "");
 
     if (doAdd || (!doAdd && pos >= oldTotal))
       cardproperty = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance();

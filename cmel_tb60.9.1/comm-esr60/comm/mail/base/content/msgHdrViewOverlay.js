@@ -612,6 +612,9 @@ var messageHeaderSink = {
         }
       }
 
+      // remplacement de ’ (alt 0146) par '
+      displayName=displayName.replace(/\x19/g, "'");
+
       currentAttachments.push(new AttachmentInfo(contentType, url, displayName,
                                                  uri, isExternalAttachment,
                                                  size));

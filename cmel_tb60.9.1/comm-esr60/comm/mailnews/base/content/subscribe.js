@@ -212,6 +212,9 @@ function SubscribeOnLoad()
   ShowCurrentList();
 
   gNameField.focus();
+
+  // Fichier -> S'abonner : liste des comptes désactivée (ticket 16)
+  serverMenu.setAttribute("disabled", true);
 }
 
 function subscribeOK()
