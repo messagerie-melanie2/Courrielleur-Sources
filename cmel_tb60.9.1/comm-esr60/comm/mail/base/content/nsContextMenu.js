@@ -654,14 +654,14 @@ nsContextMenu.prototype = {
    *         permission to link to the URL, false if not
    */
   isLinkSaveable : function CM_isLinkSaveable() {
-  
+
     //Bug mantis 0003495 : TB31 : dysfonctionnements avec la preference 'capability.policy.localfilelinks.sites'
     if (this.linkURI.schemeIs("file") &&
         (this.target.nodePrincipal.origin.match(/imap:\/\/amelie.*\.melanie2\.i2:993/) ||
          this.target.nodePrincipal.origin.match(/mailbox:\/\/\//)) ){
       return true;
     }
-  
+
     try {
       const nsIScriptSecurityManager =
         Ci.nsIScriptSecurityManager;
@@ -746,7 +746,7 @@ nsContextMenu.prototype = {
    */
   showItem : function CM_showItem(aItemOrId, aShow) {
     var item = aItemOrId.constructor == String ? document.getElementById(aItemOrId) : aItemOrId;
-    item.hidden = !aShow;
+    if (item) item.hidden = !aShow;
   },
 
   /**
