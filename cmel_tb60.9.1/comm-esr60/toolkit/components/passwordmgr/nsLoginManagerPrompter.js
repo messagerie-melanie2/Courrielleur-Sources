@@ -5,10 +5,9 @@
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+const { PromptUtils } = ChromeUtils.import("resource://gre/modules/SharedPromptUtils.jsm", {});
 
 ChromeUtils.import("resource://gre/modules/pacomeAuthUtils.jsm");
-
-const { PromptUtils } = ChromeUtils.import("resource://gre/modules/SharedPromptUtils.jsm", {});
 
 ChromeUtils.defineModuleGetter(this, "LoginHelper",
                                "resource://gre/modules/LoginHelper.jsm");
@@ -438,26 +437,12 @@ LoginManagerPrompter.prototype = {
 
     username = decodeURIComponent(username);
 
-    //mantis 3920
-    var srvm2=PacomeAuthUtils.TestServeurMelanie2(hostname);
-    if (MSG_MELANIE2==srvm2) {
-      this.log("[nsLoginManagerPrompter.js] promptPassword recherche pour uid="+username+" sur serveur melanie2:"+hostname);
+    // cas login Matisse
+    let uidReduit=username;
+    let matisse=PacomeAuthUtils.isMelanie2Host(hostname) || PacomeAuthUtils.isHostProxyAmande(hostname);
+    if (matisse)
+      uidReduit=PacomeAuthUtils.GetUidReduit(username).split("@")[0];
 
-      let matchData=Cc["@mozilla.org/hash-property-bag;1"].createInstance(Ci.nsIWritablePropertyBag);
-      matchData.setProperty("pacome", "1");
-      matchData.setProperty("hostname", hostname);
-      matchData.setProperty("username", username);
-      var count={};
-      var logins=PacomeAuthUtils.searchLogins(count, matchData);
-      if (1==count.value) {
-        aPassword.value=logins[0].password;
-        this.log("===== promptPassword login ok");
-        return true;
-      }
-
-      this.log("[nsLoginManagerPrompter.js] promptPassword recherche => aucun");
-    }
-    //fin mantis 3920
 
     // If hostname is null, we can't save this login.
     if (hostname && !this._inPrivateBrowsing) {
@@ -479,7 +464,7 @@ LoginManagerPrompter.prototype = {
         // account based on the supplied username - but in this case we'll
         // just return the first match.
         for (var i = 0; i < foundLogins.length; ++i) {
-          if (foundLogins[i].username == username) {
+          if (foundLogins[i].username == uidReduit) {
             aPassword.value = foundLogins[i].password;
             // wallet returned straight away, so this mimics that code
             return true;
@@ -487,34 +472,33 @@ LoginManagerPrompter.prototype = {
         }
       }
     }
-    
-    // cm2
-    var ok;
-    if (NON_MELANIE2!=srvm2) 
-    {
-      this.log("[nsLoginManagerPrompter.js] promptPassword demande de mot de passe melanie2");
-      
-      aPassword.value=hostname;
-      ok=PacomeAuthUtils.PromptMdp(this._window, username, aPassword);
-      checkBox.value=false;
-      
-    } 
-    else 
-    {
-      //#7060: Erreur lors de l'ajout d'un compte externe sans mémorisation de mdp
-      /*ok = this._promptService.promptPassword(this._window, aDialogTitle,
-                                                 aText, aPassword,
-                                                 checkBoxLabel, checkBox);*/
-      ok = Services.prompt.promptPassword(this._chromeWindow, aDialogTitle, aText, aPassword, checkBoxLabel, checkBox);
-    }
-    // fin cm2    
 
+    // authentification compte Matisse
+    var ok=false;
+    let memo=false;
+    if (matisse){
+
+      // afficher boite pacomemdp
+      ok=PacomeAuthUtils.PromptMdp(this._chromeWindow, username, aPassword, checkBox);
+
+      if (ok){
+        memo=checkBox.value;
+        checkBox.value=true;// pour forcer addLogin
+      }
+    }
+    else {
+
+      ok = Services.prompt.promptPassword(this._chromeWindow, aDialogTitle,
+                                              aText, aPassword,
+                                              checkBoxLabel, checkBox);
+    }
 
     if (ok && checkBox.value && hostname && aPassword.value) {
       var newLogin = Cc["@mozilla.org/login-manager/loginInfo;1"].
                      createInstance(Ci.nsILoginInfo);
-      newLogin.init(hostname, null, realm, username,
-                    aPassword.value, "", "");
+      newLogin.init(hostname, null, realm, uidReduit,
+                    aPassword.value, "",
+                    (memo ? "memo" : "nonmemo"));
 
       this.log("New login seen for " + realm);
 
@@ -575,20 +559,6 @@ LoginManagerPrompter.prototype = {
     var canAutologin = false;
     var notifyObj;
     var foundLogins;
-    
-    // mantis 3155
-    // authentification proxy AMANDE?
-    if (PacomeAuthUtils.isAuthProxyAmande(aChannel, aAuthInfo)){
-      this.log("[nsLoginManagerPrompter.js] nsLoginManagerPrompter.js promptAuth authentification proxy AMANDE");
-      return this.promptAuthM2(aChannel, aLevel, aAuthInfo);
-    }
-    // authentification melanie2
-    if (null!=aChannel && null!=aChannel.URI &&
-        APP_MELANIE2==PacomeAuthUtils.TestServeurMelanie2(aChannel.URI.host)) {
-      this.log("[nsLoginManagerPrompter.js] nsLoginManagerPrompter.js promptAuth authentification melanie2");
-      return this.promptAuthM2(aChannel, aLevel, aAuthInfo);    
-    }  
-    // fin mantis 3155
 
     try {
       this.log("===== promptAuth called =====");
@@ -652,9 +622,50 @@ LoginManagerPrompter.prototype = {
     if (!ok) {
       if (this._chromeWindow)
         PromptUtils.fireDialogEvent(this._chromeWindow, "DOMWillOpenModalDialog", this._browser);
-      ok = Services.prompt.promptAuth(this._chromeWindow,
+
+      // authentification compte Matisse
+      var ok=false;
+      if (PacomeAuthUtils.isMelanie2Host(hostname) || PacomeAuthUtils.isHostProxyAmande(hostname)){
+
+        // afficher boite pacomemdp
+        // checkBox true si le mot de passe doit être mémorisé
+        let mdp={};
+
+        // rechercher uid correspondant
+        // cas agenda : rechercher uid
+        let uid;
+        if (null!=aChannel && null!=aChannel.URI){
+          uid=PacomeAuthUtils.GetUidAgenda(aChannel.URI.spec);
+          this.log("[nsLoginManagerPrompter.js] promptAuthM2 GetUidAgenda uid:"+uid);
+        }
+
+        if (null==uid || ""==uid) {
+          //authentification pacome avec le compte principal
+          uid=PacomeAuthUtils.GetUidComptePrincipal();
+          this.log("[nsLoginManagerPrompter.js] promptAuthM2 authentification pacome avec le compte principal uid:"+uid);
+        }
+
+        if (null==uid || ""==uid)
+          throw new Exception("Identifiant Matisse non defini");
+
+        let memo="";// 'memo' si mot de passe est mémorisé dans TB, sinon 'nonmemo'
+
+        ok=PacomeAuthUtils.PromptMdp(this._chromeWindow, uid, mdp, checkbox);
+
+        if (ok){
+          aAuthInfo.username=uid;
+          aAuthInfo.password=mdp.value;
+
+          memo=checkbox.value ? "memo" : "nonmemo";
+          checkbox.value=true;// pour forcer addLogin
+        }
+      }
+      else {
+
+        ok = Services.prompt.promptAuth(this._chromeWindow,
                                       aChannel, aLevel, aAuthInfo,
                                       checkboxLabel, checkbox);
+      }
     }
 
     // If there's a notification box, use it to allow the user to
@@ -683,7 +694,7 @@ LoginManagerPrompter.prototype = {
       let newLogin = Cc["@mozilla.org/login-manager/loginInfo;1"].
                      createInstance(Ci.nsILoginInfo);
       newLogin.init(hostname, null, httpRealm,
-                    username, password, "", "");
+                    username, password, "", memo);
       if (!selectedLogin) {
         this.log("New login seen for " + username +
                  " @ " + hostname + " (" + httpRealm + ")");
@@ -711,94 +722,12 @@ LoginManagerPrompter.prototype = {
 
     return ok;
   },
-  
-  // authentification proxy AMANDE?
-  // authentification melanie2
-  promptAuthM2 : function (aChannel, aLevel, aAuthInfo) {
-    
-    //v3.4 - cas agenda : rechercher uid
-    let uid;
-    if (null!=aChannel && null!=aChannel.URI)
-      uid=PacomeAuthUtils.GetUidAgenda(aChannel.URI.spec);
-    let mdp=new Object();
-    this.log("[nsLoginManagerPrompter.js] promptAuthM2 GetUidAgenda uid:"+uid);
-    
-    if (null==uid || ""==uid) {
-      //authentification pacome avec le compte principal
-      this.log("[nsLoginManagerPrompter.js] promptAuthM2 authentification pacome avec le compte principal");
-      let compte=PacomeAuthUtils.GetComptePrincipal();
-      if (null==compte){
-        this.log("[nsLoginManagerPrompter.js] promptAuthM2 authentification "+aChannel.URI.host+" - pas de compte principal!");
-        return false;
-      }
-
-      uid=PacomeAuthUtils.GetUidReduit(compte.incomingServer.username);
-      
-      if (!(Ci.nsIAuthInformation.PREVIOUS_FAILED & aAuthInfo.flags)) {
-        mdp.value=compte.incomingServer.password;
-      }
-    }
-
-    if (null==mdp.value || ""==mdp.value) {
-      //demande mot de passe
-      this.log("[nsLoginManagerPrompter.js] promptAuthM2 authentification "+aChannel.URI.host+" - demande mot de passe");
-      let res=PacomeAuthUtils.PromptMdp(this._window, uid, mdp);
-      if (res!=1) {
-        this.log("[nsLoginManagerPrompter.js] promptAuthM2 authentification echec ou annulation promptPacome");
-        return false;
-      }
-    }
-
-    aAuthInfo.username=uid;
-    aAuthInfo.password=mdp.value;
-
-    return true;
-  },
-    
 
   asyncPromptAuth(aChannel, aCallback, aContext, aLevel, aAuthInfo) {
     var cancelable = null;
 
     try {
       this.log("===== asyncPromptAuth called =====");
-      
-      
-      //bug mantis 3155 - Pacome doit prendre en charge l'authentification des proxy du surf authentifié sur AMANDE
-      if (PacomeAuthUtils.isAuthProxyAmande(aChannel, aAuthInfo)){
-
-        this.log("[nsLoginManagerPrompter.js] asyncPromptAuth authentification proxy AMANDE");
-        this._removeLoginNotifications();
-        cancelable = this._newAsyncPromptConsumer(aCallback, aContext);
-
-        this.asyncPromptAuthPacome(aChannel, aCallback, aContext, aLevel, aAuthInfo);
-
-        return cancelable;
-      }
-      //fin bug mantis 3155    
-
-      // authentification etiquettes/pacome
-      if (aChannel instanceof Ci.nsIChannel &&
-          aAuthInfo instanceof Ci.nsIAuthInformation) {
-
-        var flags=aAuthInfo.flags;
-
-        if (Ci.nsIAuthInformation.AUTH_HOST & flags){
-                    
-          if ( ("cm2tags"==aAuthInfo.realm || "pacome"==aAuthInfo.realm) &&
-              PacomeAuthUtils.isMelanie2Host(aChannel.URI.host)){
-                
-            this.log("[nsLoginManagerPrompter.js] asyncPromptAuth authentification "+aAuthInfo.realm+" host:"+aChannel.URI.host);
-            
-            this._removeLoginNotifications();
-            cancelable=this._newAsyncPromptConsumer(aCallback, aContext);
-
-            this.asyncPromptAuthPacome(aChannel, aCallback, aContext, aLevel, aAuthInfo);
-
-            return cancelable;
-          }
-        }
-      }
-      // fin authentification etiquettes/pacome         
 
       // If the user submits a login but it fails, we need to remove the
       // notification bar that was displayed. Conveniently, the user will
@@ -840,59 +769,6 @@ LoginManagerPrompter.prototype = {
 
     return cancelable;
   },
-
-  // mantis 3155 - modification pour le courrielleur - idem bugzilla 349641
-  asyncPromptAuthPacome : function capAPA(aChannel, aCallback, aContext, aLevel, aAuthInfo) {
-
-    this.log("[nsLoginManagerPrompter.js] asyncPromptAuthPacome");
-    var self=this;
-
-    let promptlistener={
-
-      onPromptStart : function() {
-				let res=false;
-				var [hostname, httpRealm] = self._getAuthTarget(aChannel, aAuthInfo);
-				// Looks for existing logins to prefill the prompt with.
-				let foundLogins = LoginHelper.searchLoginsWithObject({
-					hostname,
-					httpRealm,
-					schemeUpgrades: LoginHelper.schemeUpgrades,
-					pacome:1,
-				});
-
-				if (foundLogins.length > 0) {
-					aAuthInfo.username=foundLogins[0].username;
-					aAuthInfo.password=foundLogins[0].password;
-					res=true;
-				}
-				else
-					 res=self.promptAuth(aChannel, aLevel, aAuthInfo);
- 
-        if (res) {
-          this.onPromptAuthAvailable();
-          return true;
-        }
-
-        this.onPromptCanceled();
-        return false;
-      },
-
-      onPromptAuthAvailable : function() {
-
-        aCallback.onAuthAvailable(aContext, aAuthInfo);
-      },
-
-      onPromptCanceled : function() {
-
-        aCallback.onAuthCancelled(aContext, true);
-      }
-    };
-
-    var asyncprompter=Components.classes["@mozilla.org/messenger/msgAsyncPrompter;1"]
-                      .getService(Components.interfaces.nsIMsgAsyncPrompter);
-    asyncprompter.queueAsyncAuthPrompt(aChannel.URI.spec, false, promptlistener);
-  },
-  //fin bug mantis 3155  
 
 
 

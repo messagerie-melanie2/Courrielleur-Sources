@@ -12,8 +12,6 @@ ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://gre/modules/Timer.jsm");
 ChromeUtils.import("resource://gre/modules/LoginManagerContent.jsm");
 
-ChromeUtils.import("resource://gre/modules/pacomeAuthUtils.jsm");
-
 ChromeUtils.defineModuleGetter(this, "BrowserUtils",
                                "resource://gre/modules/BrowserUtils.jsm");
 ChromeUtils.defineModuleGetter(this, "LoginHelper",
@@ -303,18 +301,6 @@ LoginManager.prototype = {
    */
   addLogin(login) {
     this._checkLogin(login);
-    
-    // cm2
-    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.hostname) ||
-        NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.formSubmitURL)){
-      log.debug("[nsLoginManager.js] addLogin melanie2");
-			if (!PacomeAuthUtils.isUidMdpMemo(login.username)){
-				this._storage.addLogin(login);
-				PacomeAuthUtils.addUidMdpMemo(login.username);
-			}
-      return;
-    }
-    // fin cm2    
 
     // Look for an existing entry.
     var logins = this.findLogins({}, login.hostname, login.formSubmitURL,
@@ -366,24 +352,6 @@ LoginManager.prototype = {
    */
   removeLogin(login) {
     log.debug("Removing login");
-    
-    // cm2
-    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.hostname) ||
-        NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(login.formSubmitURL)){
-      log.debug("[nsLoginManager.js] removeLogin melanie2");
-      PacomeAuthUtils.modifyMdpPacome(login.username, null);
-			if (PacomeAuthUtils.isUidMdpMemo(login.username)){
-				let loginM2=PacomeAuthUtils.findLoginToRemove(login.username);
-				if (null!=loginM2){
-					this._storage.removeLogin(loginM2);
-					PacomeAuthUtils.delUidMdpMemo(login.username);
-				}
-				else log.debug("[nsLoginManager.js] removeLogin loginM2 inexistant");
-			}
-      return;
-    }
-    // fin cm2
-
     return this._storage.removeLogin(login);
   },
 
@@ -393,18 +361,6 @@ LoginManager.prototype = {
    */
   modifyLogin(oldLogin, newLogin) {
     log.debug("Modifying login");
-    
-    // cm2
-    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(newLogin.hostname) ||
-        NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(newLogin.formSubmitURL)){
-      log.debug("[nsLoginManager.js] modifyLogin melanie2");
-      PacomeAuthUtils.modifyMdpPacome(newLogin.username, newLogin.password);
-			if (PacomeAuthUtils.isUidMdpMemo(newLogin.username))
-				this._storage.modifyLogin(oldLogin, newLogin);
-      return;
-    }
-    // fin cm2
-
     return this._storage.modifyLogin(oldLogin, newLogin);
   },
 
@@ -426,11 +382,6 @@ LoginManager.prototype = {
    */
   removeAllLogins() {
     log.debug("Removing all logins");
-    
-    // cm2
-    PacomeAuthUtils.removeAllLogins();
-    // fin cm2
-
     this._storage.removeAllLogins();
   },
 
@@ -470,14 +421,6 @@ LoginManager.prototype = {
     log.debug("Searching for logins matching origin:", origin,
               "formActionOrigin:", formActionOrigin, "httpRealm:", httpRealm);
 
-    // cm2
-    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(origin) ||
-        NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(formActionOrigin)){
-      log.debug("[nsLoginManager.js] findLogins M2");
-      return PacomeAuthUtils.findLogins(count, origin, formActionOrigin, httpRealm);
-    }        
-    // fin cm2
-
     return this._storage.findLogins(count, origin, formActionOrigin,
                                     httpRealm);
   },
@@ -502,22 +445,6 @@ LoginManager.prototype = {
         log.warn("searchLogins: `formSubmitURL` or `httpRealm` is recommended");
       }
     }
-    
-    // cm2
-    let hostname="";
-    let propEnum=matchData.enumerator;
-    while (propEnum.hasMoreElements()) {
-      let prop=propEnum.getNext().QueryInterface(Ci.nsIProperty);
-      switch (prop.name) {
-         case "hostname": hostname=prop.value;
-                        break;
-      }
-    }
-    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(hostname)) {
-      log.debug("[nsLoginManager.js] searchLogins M2");
-      return PacomeAuthUtils.searchLogins(count, matchData);
-    }
-    // fin cm2    
 
     return this._storage.searchLogins(count, matchData);
   },
@@ -553,13 +480,6 @@ LoginManager.prototype = {
     if (!this._remember) {
       return false;
     }
-    
-    // cm2
-    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(origin)){
-      log.debug("[nsLoginManager.js] getLoginSavingEnabled M2");
-      return false;
-    }
-    // fin cm2    
 
     let uri = Services.io.newURI(origin);
     return Services.perms.testPermission(uri, PERMISSION_SAVE_LOGINS) != Services.perms.DENY_ACTION;
@@ -574,13 +494,6 @@ LoginManager.prototype = {
     LoginHelper.checkHostnameValue(origin);
 
     let uri = Services.io.newURI(origin);
-    // cm2
-    if (NON_MELANIE2!=PacomeAuthUtils.TestServeurMelanie2(origin)){
-      log.debug("[nsLoginManager.js] setLoginSavingEnabled M2");
-      Services.perms.add(uri, PERMISSION_SAVE_LOGINS, Services.perms.DENY_ACTION);
-    }
-    // fin cm2 
-    
     if (enabled) {
       Services.perms.remove(uri, PERMISSION_SAVE_LOGINS);
     } else {
