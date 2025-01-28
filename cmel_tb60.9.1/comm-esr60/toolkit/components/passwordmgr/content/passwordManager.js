@@ -291,9 +291,20 @@ function SortTree(column, ascending) {
 }
 
 function LoadSignons() {
+
   // loads signons into table
   try {
-    signons = Services.logins.getAllLogins();
+
+    // filtrer les logins Matisse
+    let loginsM=Services.logins.getAllLogins();
+
+    signons=[];
+    for (let i=0;i<loginsM.length;i++) {
+      if (loginsM[i].passwordField=="nonmemo") continue;
+      signons.push(loginsM[i]);
+    }
+
+    //signons = Services.logins.getAllLogins();
   } catch (e) {
     signons = [];
   }
