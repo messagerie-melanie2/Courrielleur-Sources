@@ -512,7 +512,6 @@ function OnLoadMessenger()
   // We also don't want the account wizard to open if any sort of account exists
   //if (verifyAccounts(LoadPostAccountWizard, false, AutoConfigWizard))
   if (verifyAccounts(LoadPostAccountWizard, false, cm2ExecPacome)){
-    pacomeDemarre();
     LoadPostAccountWizard();
   }
 
@@ -646,7 +645,7 @@ function LoadPostAccountWizard()
   if (startMsgHdr)
     window.setTimeout(loadStartMsgHdr, delaicm2, startMsgHdr);
   else
-    window.setTimeout(loadStartFolder, delaicm2, startFolderURI);  
+    window.setTimeout(loadStartFolder, delaicm2, startFolderURI);
 }
 
 function HandleAppCommandEvent(evt)
