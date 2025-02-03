@@ -261,7 +261,7 @@ Section "Uninstall"
   ${un.RegCleanMain} "Software\PAMELA"
   ${un.RegCleanUninstall}
   ${un.DeleteShortcuts}
-  ; suppression groupe de menus 'Courrielleur MCE'
+  ; suppression groupe de menus 'Courrielleur Matisse'
   StrCpy $0 "$INSTDIR\uninstall\${SHORTCUTS_LOG}"
   ${If} ${FileExists} "$0"
     ${un.GetLongPath} "$SMPROGRAMS" $1
@@ -275,7 +275,7 @@ Section "Uninstall"
         ${EndIf}
       ${EndIf}
     ${EndUnless}
-  ${EndIf}  
+  ${EndIf}
 
   ; Unregister resources associated with Win7 taskbar jump lists.
   ${If} ${AtLeastWin7}

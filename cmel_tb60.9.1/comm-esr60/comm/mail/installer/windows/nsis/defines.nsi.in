@@ -5,7 +5,7 @@
 
 
 # These defines should match application.ini settings
-!define AppName               "Matisse"
+!define AppName               "Courrielleur Matisse"
 !define AppVersion            "8.7.4"
 
 !define GREVersion            @MOZILLA_VERSION@
@@ -14,15 +14,15 @@
 !define FileMainEXE           "@MOZ_APP_NAME@.exe"
 !define WindowClass           "ThunderbirdMessageWindow"
 
-!define AppRegNameMail        "Matisse"
-!define AppRegNameNews        "Matisse (News)"
+!define AppRegNameMail        "Courrielleur Matisse"
+!define AppRegNameNews        "Courrielleur Matisse (News)"
 
-!define ClientsRegName        "Matisse"
+!define ClientsRegName        "Courrielleur Matisse"
 
-!define BrandShortName        "Matisse"
+!define BrandShortName        "Courrielleur Matisse"
 !define PreReleaseSuffix      ""
 !ifndef BrandFullName
-!define BrandFullName         "Matisse"
+!define BrandFullName         "Courrielleur Matisse"
 !endif
 
 # repertoire d'installation
