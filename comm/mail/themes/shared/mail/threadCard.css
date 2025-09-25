@@ -1,0 +1,623 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
+
+:root {
+  --thread-child-start: 20px;
+  --thread-card-content-block: 3px;
+  --thread-card-content-gap: 3px;
+  --thread-indicator-content-padding: 2px 3px;
+  --thread-line-height: 100%;
+  --read-status-new: var(--icon-sparkle-star-sm);
+  --read-status-icon: var(--icon-dot);
+  --read-status-size: 16px;
+  --indicator-gap: 3px;
+  --inset-inline-start: 0;
+
+  &[uidensity="compact"] {
+    --tree-card-inline: 5px;
+    --thread-child-start: 8px;
+    --thread-card-content-block: 1px;
+    --thread-card-content-gap: 1px;
+    --thread-indicator-content-padding: 1px 3px;
+    --read-status-new: var(--icon-sparkle-star-xs);
+    --read-status-size: 12px;
+    --indicator-gap: 2px;
+  }
+
+  &[uidensity="touch"] {
+    --thread-child-start: 22px;
+    --thread-card-content-block: 6px;
+    --thread-card-content-gap: 6px;
+    --thread-indicator-content-padding: 3px;
+  }
+
+  @media not (prefers-contrast) {
+    --tree-card-border: light-dark(
+      color-mix(in srgb, var(--tree-card-background) 90%, black),
+      color-mix(in srgb, var(--tree-card-background) 90%, white)
+    );
+    --read-status-fill: transparent;
+    --read-status-stroke: transparent;
+    --new-subject-color: light-dark(var(--color-blue-60), var(--color-blue-40));
+    --thread-line-color: light-dark(var(--color-ink-40), var(--color-ink-50));
+    --new-color: light-dark(var(--color-blue-60), var(--color-blue-40));
+    /* Selection Colors */
+    --tree-card-background-current: light-dark(
+      color-mix(in srgb, var(--selected-item-color) 5%, var(--tree-card-background)),
+      color-mix(in srgb, var(--selected-item-color) 10%, var(--tree-card-background))
+    );
+    --tree-card-background-selected: light-dark(
+      color-mix(in srgb, var(--selected-item-color) 7%, var(--tree-card-background)),
+      color-mix(in srgb, var(--selected-item-color) 14%, var(--tree-card-background))
+    );
+    --tree-card-background-selected-current: light-dark(
+      color-mix(in srgb, var(--selected-item-color) 15%, var(--tree-card-background)),
+      color-mix(in srgb, var(--selected-item-color) 30%, var(--tree-card-background))
+    );
+    /* Spam Colors */
+    --tree-card-border-hover-spam: light-dark(var(--color-red-30), var(--color-red-80));
+    --tree-card-hover-spam: light-dark(var(--color-red-40), var(--color-red-70));
+    --thread-card-focus-spam: light-dark(var(--color-red-70), var(--color-red-40));
+    --tree-card-background-current-spam: light-dark(
+      color-mix(in srgb, var(--layout-background-0) 98%, var(--color-red-50)),
+      color-mix(in srgb, var(--layout-background-0) 88%, var(--color-red-90))
+    );
+    --tree-card-background-selected-spam: light-dark(
+      color-mix(in srgb, var(--layout-background-0) 95%, var(--color-red-50)),
+      color-mix(in srgb, var(--layout-background-0) 85%, var(--color-red-90))
+    );
+    --tree-card-background-selected-current-spam: light-dark(
+      color-mix(in srgb, var(--layout-background-0) 90%, var(--color-red-50)),
+      color-mix(in srgb, var(--layout-background-0) 80%, var(--color-red-90))
+    );
+    --tree-card-border-selected-spam: light-dark(var(--color-red-50), var(--color-red-70));
+    --indicator-background-selected-spam: var(--color-red-50);
+    --indicator-border-selected-spam: light-dark(var(--color-red-70), var(--color-red-40));
+  }
+
+  @media (prefers-contrast) {
+    --read-status-fill: transparent;
+    --read-status-stroke: transparent;
+    --new-subject-color: AccentColor;
+    --thread-line-color: CanvasText;
+    --new-color: SelectedItem;
+    /* Spam Colors */
+    --focus-outline-spam: light-dark(var(--color-red-70), var(--color-red-40));
+    --tree-card-border-hover-spam: var(--color-red-50);
+    --tree-card-hover-spam: transparent;
+    --thread-card-focus-spam: light-dark(var(--color-red-70), var(--color-red-40));
+    --tree-card-background-current-spam: color-mix(in srgb, Canvas 80%, var(--color-red-50));
+    --tree-card-background-selected-spam: color-mix(in srgb, Canvas 70%, var(--color-red-50));
+    --tree-card-background-selected-current-spam: light-dark(var(--color-red-70), var(--color-red-40));
+    --tree-card-border-selected-spam: color-mix(in srgb, CanvasText 30%, var(--color-red-50));
+    --indicator-background-selected-spam: light-dark(var(--color-red-70), var(--color-red-40));
+    --indicator-border-selected-spam: color-mix(in srgb, CanvasText 30%, var(--color-red-50));
+  }
+}
+
+#threadTree[rows="thread-card"] {
+  background-color: var(--tree-pane-background);
+  padding-block: var(--tree-card-block);
+
+  /* Default Card */
+  & .card-layout {
+    outline-color: transparent;
+    background-color: var(--tree-pane-background);
+
+    /* Unread Message */
+    &[data-properties~="unread"] {
+      --read-status-fill: var(--color-green-40);
+      --read-status-stroke: var(--color-green-60);
+
+      & :is(.sender, .subject) {
+        font-weight: bold;
+      }
+
+      /* New Message */
+      &[data-properties~="new"] {
+        --read-status-icon: var(--read-status-new);
+        --read-status-fill: var(--color-yellow-30);
+        --read-status-stroke: var(--color-amber-50);
+
+        & .subject {
+          color: var(--new-subject-color);
+        }
+      }
+    }
+
+    &[data-properties~="hasUnread"] {
+      & .replies-icon,
+      & .thread-replies {
+        font-weight: bold;
+        color: var(--new-color);
+        fill: color-mix(in srgb, currentColor 20%, transparent);
+        stroke: currentColor;
+      }
+
+      & button.twisty {
+        background-color: var(--layout-background-2);
+        border-color: var(--layout-background-4);
+
+        &::before {
+          position: absolute;
+          inset-inline-start: -3px;
+          inset-block-start: -3px;
+          content: var(--icon-sparkle-star-xs);
+          -moz-context-properties: fill, stroke;
+          fill: var(--color-yellow-30);
+          stroke: var(--color-amber-50);
+          overflow: visible;
+        }
+
+        & .thread-replies {
+          font-weight: bold;
+          color: var(--unread-color);
+        }
+      }
+
+      &:not([data-properties~="hasNew"]) {
+        & .replies-icon,
+        & .thread-replies {
+          color: var(--unread-color);
+        }
+
+        & .twisty::before {
+          overflow: visible;
+          content: var(--icon-dot-xs);
+          fill: var(--color-green-50);
+          stroke: var(--color-green-60);
+        }
+      }
+    }
+
+    &[data-properties~="replied"] {
+      & .state.replied {
+        display: inline-flex;
+      }
+
+      & :is(.subject-line img, .replied) {
+        visibility: initial;
+        content: var(--icon-reply-col);
+        fill: var(--color-purple-50);
+      }
+
+      &[data-properties~="forwarded"] .subject-line img {
+        visibility: initial;
+        content: var(--icon-reply-forward-col);
+        fill: var(--color-blue-50);
+        stroke: var(--color-purple-50);
+      }
+
+      &[data-properties~="redirected"] .subject-line img {
+        visibility: initial;
+        content: var(--icon-reply-redirect-col);
+        fill: var(--color-orange-50);
+        stroke: var(--color-purple-50);
+      }
+
+      &[data-properties~="forwarded"][data-properties~="redirected"]
+        .subject-line img {
+        visibility: initial;
+        content: var(--icon-reply-forward-redirect-col);
+        fill: var(--color-blue-50);
+        stroke: var(--color-purple-50);
+      }
+    }
+
+    &[data-properties~="forwarded"] {
+      & .state.forwarded {
+        display: inline-flex;
+      }
+
+      & :is(.subject-line img, .forwarded) {
+        visibility: initial;
+        display: initial;
+        content: var(--icon-forward-col);
+        fill: var(--color-blue-50);
+      }
+
+      &[data-properties~="redirected"].subject-line img {
+        visibility: initial;
+        content: var(--icon-forward-redirect-col);
+        fill: var(--color-blue-50);
+        stroke: var(--color-orange-50);
+      }
+    }
+
+    &[data-properties~="redirected"] {
+      & .state.redirected {
+        display: inline-flex;
+      }
+
+      & :is(.subject-line img, .redirected) {
+        visibility: initial;
+        display: initial;
+        content: var(--icon-redirect-col);
+        fill: var(--color-orange-50);
+      }
+    }
+
+    & td {
+
+      & button {
+        min-height: 16px;
+        min-width: 16px;
+        opacity: 0.7;
+
+        &:hover {
+          opacity: 1;
+        }
+
+        &.twisty {
+          width: auto;
+          height: auto;
+          min-width: 12px;
+          min-height: 13px;
+          padding: 0;
+          border: 1px solid transparent;
+          position: relative;
+          overflow: visible;
+          border-radius: var(--button-border-radius);
+
+          &::before {
+            position: absolute;
+            inset-inline-start: -3px;
+            inset-block-start: -3px;
+            -moz-context-properties: fill, stroke;
+            z-index: 10;
+          }
+
+          &:hover {
+            background-color: var(--layout-background-2);
+            border-color: var(--layout-background-4);
+          }
+
+          & .thread-indicator-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+            font-size: 0.9rem;
+            font-weight: 700;
+            position: relative;
+            padding: var(--thread-indicator-content-padding);
+          }
+
+          & img {
+            display: inline-block;
+          }
+
+          & .replies-icon {
+            height: 12px;
+            width: 12px;
+            margin: 1px;
+            content: var(--icon-replies-xs);
+          }
+
+          & .thread-replies {
+            margin: 0 2px;
+          }
+
+          & .twisty-icon {
+            height: 10px;
+            width: 10px;
+          }
+        }
+      }
+
+      & .card-container {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        padding-inline-start: 3px; /* Keep the start indicator close to the front */
+        box-sizing: border-box;
+        position: relative;
+        overflow: visible;
+        isolation: isolate;
+
+        &::before {
+          inset-inline-start: calc(var(--indicator-width) * -1 - var(--indicator-gap));
+        }
+
+        & .thread-card-column {
+          display: grid;
+          gap: var(--thread-pane-container-gap);
+          box-sizing: border-box;
+          position: relative;
+          padding-block: var(--thread-card-content-block);
+        }
+
+        & .thread-card-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--thread-card-content-gap);
+          padding: 0;
+          margin: 0;
+          line-height: 1.3;
+          position: relative;
+          isolation: isolate;
+
+          &:not(.thread-card-last-row) {
+            margin-inline-start: 3px;
+          }
+        }
+
+        & .state,
+        & .sort-header-details {
+          display: none;
+        }
+
+        & .read-status {
+          content: var(--read-status-icon);
+          height: var(--read-status-size);
+          width: var(--read-status-size);
+          -moz-context-properties: fill, stroke;
+          fill: var(--read-status-fill);
+          stroke: var(--read-status-stroke);
+        }
+
+        & .thread-card-icon-info {
+          display: flex;
+          margin-inline-start: auto;
+          align-items: center;
+          justify-content: space-between;
+          gap: 6px;
+        }
+
+        /**
+        * Don't display this when only one account is added or when the user has
+        * disabled it in the settings.
+        * TODO: Create a way for the user to select a color to associate with each
+        * added account. Use that account color as the var(--acount-color) variable
+        * and create a toggle to show/hide this indicator.
+        */
+        & .account-indicator {
+          display: none;
+          box-sizing: border-box;
+          background-color: var(--account-color);
+          border: 1px solid color-mix(in srgb, var(--account-color) 80%, black);
+          border-radius: 4px;
+          width: 4px;
+          height: 12px;
+          margin-inline-end: -3px;
+        }
+
+        & :is(.sender, .subject) {
+          flex: 1 1 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        & .sender {
+          font-weight: 600;
+          font-size: 0.95rem;
+        }
+
+        & .date {
+          flex: 0 0 auto;
+          white-space: nowrap;
+          font-size: 0.95rem;
+          opacity: 0.85;
+        }
+
+        & .tree-button-more {
+          --button-padding: 0;
+          color: inherit;
+          opacity: .5;
+          background-image: var(--icon-kebab);
+          -moz-context-properties: fill, stroke;
+          fill: currentColor;
+          stroke: currentColor;
+
+          &:hover,
+          &:focus {
+            background-color: color-mix(in srgb, currentColor 10%, transparent);
+            border-color: transparent;
+            opacity: 1;
+          }
+
+          &:active {
+            background-color: color-mix(in srgb, currentColor 30%, transparent);
+            border-color: transparent;
+            opacity: 1;
+          }
+        }
+
+        & .tag-icon {
+          -moz-context-properties: fill, stroke;
+          fill: color-mix(in srgb, light-dark(white, black) 50%, var(--tag-color, currentColor));
+          stroke: var(--tag-color, currentColor);
+        }
+
+        & .is-outgoing [data-properties~="outgoing"] & > .sender {
+          background-position-x: 0;
+          background-position-y: center;
+          background-repeat: no-repeat;
+          background-image: var(--icon-nav-forward);
+          -moz-context-properties: stroke, fill-opacity;
+          stroke: currentColor;
+          fill-opacity: 0.3;
+          padding-inline-start: 18px;
+
+          &:dir(rtl) {
+            background-image: var(--icon-nav-back);
+            background-position-x: 100%
+          }
+        }
+      }
+    }
+
+    @media (prefers-contrast) {
+      &.current.selected .card-container {
+        --thread-pane-flag-fill: SelectedItemText;
+        --thread-pane-flag-stroke: SelectedItemText;
+        --thread-pane-spam-fill: SelectedItemText;
+        --thread-pane-spam-stroke: SelectedItemText;
+        --new-subject-color: SelectedItemText;
+      }
+    }
+
+    & [data-properties~="dummy"] > td > .card-container > &:first-child {
+      display: none;
+    }
+  }
+
+  /* Thread Children */
+  & .card-layout[data-properties~="thread-children"] {
+    & td {
+      --circle-size: 12px;
+      padding-inline-start: calc(var(--thread-child-start) + var(--circle-size));
+
+      &::after {
+        position: absolute;
+        content: var(--icon-dot-xs);
+        height: var(--circle-size);
+        width: var(--circle-size);
+        inset-block: calc(50% - var(--circle-size) / 2);
+        inset-inline-start: calc((var(--tree-card-inline) * 2) - var(--circle-size) / 2);
+        -moz-context-properties: fill, stroke;
+        fill: var(--tree-pane-background);
+        stroke: var(--thread-line-color);
+      }
+
+      &::before {
+        display: block;
+        content: "";
+        position: absolute;
+        height: var(--thread-line-height);
+        --line-width: 1px;
+        width: var(--line-width);
+        border-inline-start: var(--line-width) dashed var(--thread-line-color);
+        inset-inline-start: calc((var(--tree-card-inline) * 2) - var(--line-width) / 2);
+        inset-block: 0;
+      }
+    }
+
+    &:has(+ tr:not([data-properties~="thread-children"])),
+    &:last-child {
+      --thread-line-height: 50%;
+    }
+  }
+
+  /* Grouped By Sort */
+  &[data-show-grouped-by-sort~="true"] {
+
+    & button.twisty :is(.replies-icon, .thread-replies) {
+      display: none;
+    }
+
+    /* Sort Headers */
+    & .card-layout[data-properties~="dummy"] {
+      --tree-card-background: var(--tree-pane-background);
+      --tree-card-border: var(--tree-pane-background);
+      --indicator-background: var(--tree-pane-background);
+      --indicator-border: var(--tree-pane-background);
+      --inset-inline-start: 0;
+
+      & .read-status,
+      & .thread-card-column:first-of-type,
+      & .thread-card-row:first-of-type,
+      & .thread-card-indicator-content,
+      & .thread-card-icon-info {
+        display: none;
+      }
+
+      & .thread-card-column {
+        align-content: center;
+      }
+
+      & .thread-card-row:not(.thread-card-last-row) {
+        margin-inline-start: 0;
+      }
+
+      & .subject {
+        font-size: 1.1rem;
+        font-weight: 400;
+        color: var(--layout-color-2);
+      }
+
+      & .sort-header-details {
+        display: inline-block;
+        font-weight: 500;
+        color: var(--layout-color-2);
+
+        & > span {
+          font-weight: 700;
+        }
+      }
+
+      & .card-container {
+        padding-inline: 0;
+        grid-template-columns: 1fr;
+      }
+
+      &.collapsed {
+        & .card-container {
+          border-bottom: 1px solid light-dark(var(--color-gray-20), var(--color-gray-80));
+          border-radius: 0;
+        }
+      }
+
+      &:hover {
+        & .card-container {
+          box-shadow: none;
+        }
+      }
+
+      &:is(:hover, :focus, :focus-within, .current, .selected, .current.selected) {
+        --tree-card-background: var(--tree-pane-background);
+        --tree-card-border: var(--tree-pane-background);
+        --indicator-background: var(--tree-pane-background);
+        --indicator-border: var(--tree-pane-background);
+        --inset-inline-start: -6px;
+      }
+    }
+
+    & .card-layout[data-properties~="thread-children"] {
+      & td {
+        padding-inline-start: var(--tree-card-inline);
+
+        &::before,
+        &::after {
+          display: none;
+        }
+      }
+    }
+  }
+
+  /* Spam */
+  & .card-layout[data-properties~="junk"] {
+    --tree-focus-outline: var(--focus-outline-spam);
+    --tree-card-border-hover: var(--tree-card-border-hover-spam);
+    --tree-card-background-current: var(--tree-card-background-current-spam);
+    --tree-card-hover: var(--tree-card-hover-spam);
+    --tree-card-background-current: var(--tree-card-background-current-spam);
+    --tree-card-background-selected: var(--tree-card-background-selected-spam);
+    --tree-card-background-selected-current: var(--tree-card-background-selected-current-spam);
+    --tree-card-border-selected: var(--tree-card-border-selected-spam);
+    --tree-card-border-focus: var(--tree-card-border-selected-spam);
+    --thread-card-focus: var(--thread-card-focus-spam);
+    --indicator-background-selected: var(--indicator-background-selected-spam);
+    --indicator-border-selected: var(--indicator-border-selected-spam);
+  }
+
+  /* Unfocused */
+  &:not(:focus, :focus-within) .card-layout,
+  &:not(:focus, :focus-within) .card-layout[data-properties~="junk"] {
+    &.current {
+      --tree-card-background: var(--tree-card-background-current-unfocused);
+    }
+
+    &.selected {
+      --tree-card-background: var(--tree-card-background-selected-unfocused);
+      --tree-card-border: var(--tree-card-border-selected-unfocused);
+      --indicator-background: var(--indicator-background-selected-unfocused);
+      --indicator-border: var(--indicator-border-selected-unfocused);
+    }
+
+    &.selected.current {
+      --tree-card-background: var(--tree-card-background-selected-current-unfocused);
+    }
+  }
+}

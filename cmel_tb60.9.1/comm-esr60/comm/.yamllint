@@ -1,8 +1,0 @@
----
-extends: default
-
-rules:
-  document-end:
-     present: false
-  # Checks currently failing
-  line-length: disable

@@ -1,2 +1,0 @@
-# This is only used on buildbot, which is still using vs2015
-. $topsrcdir/build/win32/mozconfig.vs2015-win64
